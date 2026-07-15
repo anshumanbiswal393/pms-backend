@@ -180,13 +180,16 @@ class ReservationViewSet(viewsets.ModelViewSet):
         serializer = AssignRoomSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        RoomAssignmentEngine.assign_room(
-            tenant=tenant,
-            allocation_id=serializer.validated_data['allocation_id'],
-            room_id=serializer.validated_data['room_id'],
-            user=request.user,
-            upgrade_reason=serializer.validated_data.get('upgrade_reason')
-        )
+        try:
+            RoomAssignmentEngine.assign_room(
+                tenant=tenant,
+                allocation_id=serializer.validated_data['allocation_id'],
+                room_id=serializer.validated_data['room_id'],
+                user=request.user,
+                upgrade_reason=serializer.validated_data.get('upgrade_reason')
+            )
+        except DjangoValidationError as e:
+            handle_django_validation_error(e)
         # return updated reservation
         output = self.get_serializer(reservation)
         return Response(output.data, status=status.HTTP_200_OK)
