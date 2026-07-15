@@ -1,4 +1,5 @@
 from rest_framework import viewsets, status, permissions
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
@@ -340,6 +341,31 @@ class GuestDocumentViewSet(viewsets.ModelViewSet):
         if not tenant:
             return GuestDocument.objects.none()
         return GuestDocument.objects.filter(tenant=tenant)
+
+    @action(detail=False, methods=['post'], url_path='upload', parser_classes=[MultiPartParser, FormParser])
+    def upload(self, request):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response({'error': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        import os
+        from django.conf import settings
+        from django.core.files.storage import default_storage
+        
+        # Ensure media directory exists
+        media_dir = os.path.join(settings.MEDIA_ROOT, 'guest_documents')
+        if not os.path.exists(media_dir):
+            os.makedirs(media_dir, exist_ok=True)
+            
+        # Save file
+        file_name = default_storage.save(f"guest_documents/{file_obj.name}", file_obj)
+        file_url = default_storage.url(file_name)
+        
+        return Response({'url': file_url}, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], url_path='verify', permission_classes=[IsVerifyDocumentManager])
     def verify(self, request, pk=None):

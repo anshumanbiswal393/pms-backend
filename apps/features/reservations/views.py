@@ -213,6 +213,38 @@ class ReservationViewSet(viewsets.ModelViewSet):
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
+    @extend_schema(request=None, responses={200: ReservationSerializer})
+    @action(detail=True, methods=['post'], url_path='undo-check-in')
+    def undo_check_in(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+        updated = CheckInCheckOutEngine.undo_check_in(
+            tenant=tenant,
+            reservation_id=reservation.id,
+            user=request.user
+        )
+        output = self.get_serializer(updated)
+        return Response(output.data, status=status.HTTP_200_OK)
+
+    @extend_schema(request=None, responses={200: ReservationSerializer})
+    @action(detail=True, methods=['post'], url_path='undo-check-out')
+    def undo_check_out(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+        updated = CheckInCheckOutEngine.undo_check_out(
+            tenant=tenant,
+            reservation_id=reservation.id,
+            user=request.user
+        )
+        output = self.get_serializer(updated)
+        return Response(output.data, status=status.HTTP_200_OK)
+
     @extend_schema(request=CancelReservationSerializer, responses={200: ReservationSerializer})
     @action(detail=True, methods=['post'], url_path='cancel')
     def cancel(self, request, pk=None):

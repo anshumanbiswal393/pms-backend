@@ -55,6 +55,61 @@ class GuestProfileSerializer(serializers.ModelSerializer):
             return EncryptionHelper.decrypt(primary_doc.document_number)
         return ""
 
+    def update(self, instance, validated_data):
+        request = self.context.get('request')
+        if request:
+            email = request.data.get('primary_email')
+            phone = request.data.get('primary_phone')
+            address = request.data.get('primary_address')
+            
+            if email is not None or phone is not None or address is not None:
+                contact = instance.contacts.filter(is_primary=True).first()
+                if contact:
+                    if email is not None: contact.email = email
+                    if phone is not None: contact.phone = phone
+                    if address is not None: contact.address_line_1 = address
+                    contact.save()
+                else:
+                    GuestContact.objects.create(
+                        tenant=instance.tenant,
+                        guest=instance,
+                        email=email or "",
+                        phone=phone or "",
+                        address_line_1=address or "",
+                        is_primary=True
+                    )
+            
+            id_type = request.data.get('id_type')
+            id_number = request.data.get('id_number')
+            id_proof_url = request.data.get('id_proof_url')
+            
+            if id_type is not None or id_number is not None or id_proof_url is not None:
+                doc = instance.documents.first()
+                doc_type = 'PASSPORT'
+                if id_type:
+                    id_type_upper = id_type.upper()
+                    if 'ID' in id_type_upper or 'CARD' in id_type_upper or 'AADHAAR' in id_type_upper:
+                        doc_type = 'NATIONAL_ID'
+                    elif 'LICENSE' in id_type_upper or 'LICENCE' in id_type_upper or 'DRIVING' in id_type_upper:
+                        doc_type = 'DRIVING_LICENCE'
+                
+                if doc:
+                    if id_type is not None: doc.document_type = doc_type
+                    if id_number is not None: doc.document_number = id_number
+                    if id_proof_url is not None: doc.attachment_url = id_proof_url
+                    doc.save()
+                else:
+                    GuestDocument.objects.create(
+                        tenant=instance.tenant,
+                        guest=instance,
+                        document_type=doc_type,
+                        document_number=id_number or "",
+                        attachment_url=id_proof_url or "",
+                        is_verified=False
+                    )
+                    
+        return super().update(instance, validated_data)
+
     def create(self, validated_data):
         request = self.context.get('request')
         tenant = getattr(request, 'tenant', None)

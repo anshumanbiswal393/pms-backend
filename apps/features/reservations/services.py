@@ -609,6 +609,61 @@ class CheckInCheckOutEngine:
         )
         return reservation
 
+    @staticmethod
+    @transaction.atomic
+    def undo_check_in(tenant, reservation_id, user=None):
+        reservation = Reservation.objects.get(id=reservation_id, tenant=tenant)
+        if reservation.status != 'CHECKED_IN':
+            raise ValidationError("Reservation must be checked in to undo check-in.")
+
+        reservation.status = 'CONFIRMED'
+        reservation.save(update_fields=['status'])
+
+        for alloc in reservation.room_allocations.all():
+            alloc.status = 'RESERVED'
+            alloc.save(update_fields=['status'])
+
+            for res_guest in alloc.guests.all():
+                res_guest.is_checked_in = False
+                res_guest.checked_in_at = None
+                res_guest.save(update_fields=['is_checked_in', 'checked_in_at'])
+
+        ReservationEvent.objects.create(
+            tenant=tenant,
+            reservation=reservation,
+            event_type='REVERTED_CHECK_IN',
+            description="Reservation check-in undone.",
+            actor_user=user
+        )
+        return reservation
+
+    @staticmethod
+    @transaction.atomic
+    def undo_check_out(tenant, reservation_id, user=None):
+        reservation = Reservation.objects.get(id=reservation_id, tenant=tenant)
+        if reservation.status != 'CHECKED_OUT':
+            raise ValidationError("Reservation must be checked out to undo check-out.")
+
+        reservation.status = 'CHECKED_IN'
+        reservation.save(update_fields=['status'])
+
+        for alloc in reservation.room_allocations.all():
+            alloc.status = 'CHECKED_IN'
+            alloc.save(update_fields=['status'])
+
+            for res_guest in alloc.guests.all():
+                res_guest.checked_out_at = None
+                res_guest.save(update_fields=['checked_out_at'])
+
+        ReservationEvent.objects.create(
+            tenant=tenant,
+            reservation=reservation,
+            event_type='REVERTED_CHECK_OUT',
+            description="Reservation check-out undone.",
+            actor_user=user
+        )
+        return reservation
+
 
 class ReservationModificationEngine:
     @staticmethod
