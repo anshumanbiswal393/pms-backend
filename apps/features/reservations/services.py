@@ -579,9 +579,10 @@ class CheckInCheckOutEngine:
         if reservation.status != 'CHECKED_IN':
             raise ValidationError("Reservation must be checked in to execute check-out.")
 
-        # Check balance limit
-        if reservation.balance_amount > Decimal('0.00'):
-            raise ValidationError(f"Cannot checkout reservation with outstanding folio balance of {reservation.balance_amount}.")
+        # Compute actual outstanding balance dynamically to avoid stale stored values
+        actual_balance = (reservation.total_amount + reservation.tax_amount - reservation.discount_amount) - reservation.paid_amount
+        if actual_balance > Decimal('0.00'):
+            raise ValidationError(f"Cannot checkout reservation with outstanding folio balance of {actual_balance}.")
 
         reservation.status = 'CHECKED_OUT'
         reservation.save(update_fields=['status'])

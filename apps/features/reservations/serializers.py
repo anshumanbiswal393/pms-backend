@@ -59,7 +59,7 @@ class ReservationSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = (
             'id', 'tenant', 'confirmation_number', 'total_amount', 'tax_amount',
-            'balance_amount', 'booking_date', 'status', 'created_at', 'updated_at'
+            'booking_date', 'status', 'created_at', 'updated_at'
         )
 
     def get_primary_guest_name(self, obj):
