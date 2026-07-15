@@ -115,6 +115,16 @@ class Reservation(BaseModel):
     def __str__(self):
         return f"{self.confirmation_number} - {self.primary_guest.first_name} {self.primary_guest.last_name}"
 
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        super().save(*args, **kwargs)
+        if not is_new:
+            for alloc in self.room_allocations.all():
+                if alloc.check_in_date != self.arrival_date or alloc.check_out_date != self.departure_date:
+                    alloc.check_in_date = self.arrival_date
+                    alloc.check_out_date = self.departure_date
+                    alloc.save(update_fields=['check_in_date', 'check_out_date'])
+
 
 class ReservationInventory(BaseModel):
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='reservation_allocations')
