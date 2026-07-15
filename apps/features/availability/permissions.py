@@ -71,9 +71,11 @@ class HasAvailabilityPermission(permissions.BasePermission):
 
 class IsRestrictionManager(HasAvailabilityPermission):
     def get_required_permission(self, request, view):
-        return 'restriction.manage'
+        # Map to rates.edit or settings.edit since restrictions are set on rates/inventory
+        return 'rates.edit'
 
 
 class IsHoldManager(HasAvailabilityPermission):
     def get_required_permission(self, request, view):
-        return 'hold.manage'
+        # Map to reservations.create/edit since holds block inventory for reservations
+        return 'reservations.create'
