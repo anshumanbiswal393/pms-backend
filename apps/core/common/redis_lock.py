@@ -13,6 +13,17 @@ def redis_distributed_lock(lock_key, timeout=15, retry_delay=0.1, max_retries=10
     Ensures safe concurrent operations for critical resources (e.g. room assignments).
     If Redis fails, it gracefully falls back (yielding acquired=False), letting DB transactions handle it.
     """
+    try:
+        cache.set("pms:ping", "pong", timeout=1)
+        if cache.get("pms:ping") != "pong":
+            logger.warning("Cache is unresponsive. Falling back to DB-level safety.")
+            yield False
+            return
+    except Exception as e:
+        logger.warning(f"Cache check failed: {e}. Falling back to DB-level safety.")
+        yield False
+        return
+
     acquired = False
     lock_value = str(uuid.uuid4())
     
