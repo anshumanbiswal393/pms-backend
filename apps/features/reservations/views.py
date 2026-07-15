@@ -54,6 +54,16 @@ class GroupBlockViewSet(viewsets.ModelViewSet):
         serializer.save(tenant=tenant)
 
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework.exceptions import ValidationError as DRFValidationError
+
+def handle_django_validation_error(e):
+    if hasattr(e, 'message_dict') and e.message_dict:
+        raise DRFValidationError(detail=e.message_dict)
+    msg = e.messages[0] if hasattr(e, 'messages') and e.messages else str(e)
+    raise DRFValidationError(detail=msg)
+
+
 class ReservationViewSet(viewsets.ModelViewSet):
     serializer_class = ReservationSerializer
     permission_classes = [HasReservationPermission]
@@ -189,11 +199,14 @@ class ReservationViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
         reservation = self.get_object()
-        updated = CheckInCheckOutEngine.check_in(
-            tenant=tenant,
-            reservation_id=reservation.id,
-            user=request.user
-        )
+        try:
+            updated = CheckInCheckOutEngine.check_in(
+                tenant=tenant,
+                reservation_id=reservation.id,
+                user=request.user
+            )
+        except DjangoValidationError as e:
+            handle_django_validation_error(e)
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -205,11 +218,14 @@ class ReservationViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
         reservation = self.get_object()
-        updated = CheckInCheckOutEngine.check_out(
-            tenant=tenant,
-            reservation_id=reservation.id,
-            user=request.user
-        )
+        try:
+            updated = CheckInCheckOutEngine.check_out(
+                tenant=tenant,
+                reservation_id=reservation.id,
+                user=request.user
+            )
+        except DjangoValidationError as e:
+            handle_django_validation_error(e)
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -221,11 +237,14 @@ class ReservationViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
         reservation = self.get_object()
-        updated = CheckInCheckOutEngine.undo_check_in(
-            tenant=tenant,
-            reservation_id=reservation.id,
-            user=request.user
-        )
+        try:
+            updated = CheckInCheckOutEngine.undo_check_in(
+                tenant=tenant,
+                reservation_id=reservation.id,
+                user=request.user
+            )
+        except DjangoValidationError as e:
+            handle_django_validation_error(e)
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -237,11 +256,14 @@ class ReservationViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
         reservation = self.get_object()
-        updated = CheckInCheckOutEngine.undo_check_out(
-            tenant=tenant,
-            reservation_id=reservation.id,
-            user=request.user
-        )
+        try:
+            updated = CheckInCheckOutEngine.undo_check_out(
+                tenant=tenant,
+                reservation_id=reservation.id,
+                user=request.user
+            )
+        except DjangoValidationError as e:
+            handle_django_validation_error(e)
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -365,13 +387,16 @@ class ReservationViewSet(viewsets.ModelViewSet):
         serializer = RoomUpgradeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        RoomAssignmentEngine.upgrade_room(
-            tenant=tenant,
-            allocation_id=serializer.validated_data['allocation_id'],
-            new_inventory_type_id=serializer.validated_data['new_inventory_type_id'],
-            upgrade_reason=serializer.validated_data['upgrade_reason'],
-            user=request.user
-        )
+        try:
+            RoomAssignmentEngine.upgrade_room(
+                tenant=tenant,
+                allocation_id=serializer.validated_data['allocation_id'],
+                new_inventory_type_id=serializer.validated_data['new_inventory_type_id'],
+                upgrade_reason=serializer.validated_data['upgrade_reason'],
+                user=request.user
+            )
+        except DjangoValidationError as e:
+            handle_django_validation_error(e)
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
 
     @extend_schema(request=RoomChangeSerializer, responses={200: ReservationSerializer})
@@ -384,12 +409,15 @@ class ReservationViewSet(viewsets.ModelViewSet):
         serializer = RoomChangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        RoomAssignmentEngine.change_room(
-            tenant=tenant,
-            allocation_id=serializer.validated_data['allocation_id'],
-            new_room_id=serializer.validated_data['new_room_id'],
-            user=request.user
-        )
+        try:
+            RoomAssignmentEngine.change_room(
+                tenant=tenant,
+                allocation_id=serializer.validated_data['allocation_id'],
+                new_room_id=serializer.validated_data['new_room_id'],
+                user=request.user
+            )
+        except DjangoValidationError as e:
+            handle_django_validation_error(e)
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'], url_path='validate-availability')
