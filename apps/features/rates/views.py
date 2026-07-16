@@ -165,7 +165,7 @@ class RateCalendarViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         property_id = self.request.query_params.get('property_id')
-        qs = RateCalendar.objects.all()
+        qs = RateCalendar.objects.select_related('rate_plan', 'inventory_unit_type')
         if property_id:
             qs = qs.filter(property_id=property_id)
         return qs
@@ -208,7 +208,9 @@ class RateCalendarViewSet(viewsets.ModelViewSet):
         if not tenant:
             return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        qs = RateCalendar.objects.filter(property_id=property_id)
+        qs = RateCalendar.objects.filter(property_id=property_id).select_related(
+            'rate_plan', 'inventory_unit_type'
+        )
         
         start_date_str = request.query_params.get('start_date')
         end_date_str = request.query_params.get('end_date')
@@ -230,6 +232,77 @@ class RateCalendarViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='bulk-update-rates')
+    def bulk_update_rates(self, request):
+        """
+        Bulk update base_rate for a room type across a date range.
+        Updates RatePlanInventoryType.base_rate (source of truth), then
+        triggers a calendar rebuild for the given date range.
+
+        Body:
+          property_id: UUID (required)
+          inventory_unit_type_id: UUID | "all" (required)
+          start_date: YYYY-MM-DD (required)
+          end_date: YYYY-MM-DD (required)
+          new_rate: decimal (required)
+        """
+        from django.db import transaction
+        from decimal import Decimal
+
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = request.data
+        property_id = data.get('property_id')
+        unit_type_id = data.get('inventory_unit_type_id')  # UUID or "all"
+        start_date_str = data.get('start_date')
+        end_date_str = data.get('end_date')
+        new_rate = data.get('new_rate')
+
+        if not all([property_id, start_date_str, end_date_str, new_rate]):
+            return Response(
+                {'error': 'property_id, start_date, end_date, and new_rate are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        start_date = parse_date(start_date_str)
+        end_date = parse_date(end_date_str)
+        if not start_date or not end_date or start_date > end_date:
+            return Response({'error': 'Invalid date range.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            new_rate_decimal = Decimal(str(new_rate))
+        except Exception:
+            return Response({'error': 'Invalid rate value.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            # Update RatePlanInventoryType base_rate (source of truth)
+            rpit_qs = RatePlanInventoryType.objects.filter(
+                rate_plan__property_id=property_id,
+                rate_plan__is_active=True,
+                tenant=tenant,
+            )
+            if unit_type_id and unit_type_id != 'all':
+                rpit_qs = rpit_qs.filter(inventory_unit_type_id=unit_type_id)
+
+            updated_count = rpit_qs.update(base_rate=new_rate_decimal)
+
+            # Rebuild calendar so RateCalendar rows reflect new rates
+            rebuilt = RateCalendarService.rebuild_calendar(
+                tenant=tenant,
+                property_id=property_id,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+        return Response({
+            'status': 'success',
+            'rate_plans_updated': updated_count,
+            'calendar_records_rebuilt': rebuilt,
+            'date_range': {'start': start_date_str, 'end': end_date_str},
+        }, status=status.HTTP_200_OK)
 
 
 class HospitalityPackageViewSet(viewsets.ModelViewSet):
