@@ -72,7 +72,8 @@ class ReservationViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
             return Reservation.objects.none()
-        return Reservation.objects.filter(tenant=tenant).select_related(
+            
+        qs = Reservation.objects.filter(tenant=tenant).select_related(
             'primary_guest',
             'reservation_source',
             'corporate_account',
@@ -83,6 +84,24 @@ class ReservationViewSet(viewsets.ModelViewSet):
             'room_allocations__rate_snapshots',
             'room_allocations__guests'
         )
+        
+        # Filter by active window if start_date and end_date are provided
+        from django.utils.dateparse import parse_date
+        from django.db.models import Q
+        start_date_str = self.request.query_params.get('start_date')
+        end_date_str = self.request.query_params.get('end_date')
+        
+        if start_date_str and end_date_str:
+            start_date = parse_date(start_date_str)
+            end_date = parse_date(end_date_str)
+            if start_date and end_date:
+                # Intersecting reservations: arrival < end AND departure > start
+                qs = qs.filter(
+                    arrival_date__lte=end_date,
+                    departure_date__gte=start_date
+                )
+                
+        return qs
 
     @extend_schema(request=PriceEstimationSerializer, responses={200: dict})
     @action(detail=False, methods=['post'], url_path='estimate')

@@ -91,6 +91,12 @@ class Reservation(BaseModel):
     corporate_travel_purpose = models.CharField(max_length=64, null=True, blank=True)
 
     class Meta:
+        indexes = [
+            models.Index(fields=['tenant', 'arrival_date', 'departure_date']),
+            models.Index(fields=['tenant', 'status']),
+            models.Index(fields=['property', 'arrival_date']),
+            models.Index(fields=['deleted_at']),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(status__in=[s[0] for s in RESERVATION_STATUS_CHOICES]),
@@ -105,11 +111,6 @@ class Reservation(BaseModel):
                 name='unique_property_booking_reference',
                 condition=models.Q(booking_reference__isnull=False)
             )
-        ]
-        indexes = [
-            models.Index(fields=['tenant', 'property', 'status']),
-            models.Index(fields=['tenant', 'arrival_date', 'departure_date']),
-            models.Index(fields=['deleted_at']),
         ]
 
     def __str__(self):
