@@ -72,7 +72,17 @@ class ReservationViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
             return Reservation.objects.none()
-        return Reservation.objects.filter(tenant=tenant)
+        return Reservation.objects.filter(tenant=tenant).select_related(
+            'primary_guest',
+            'reservation_source',
+            'corporate_account',
+            'group_block'
+        ).prefetch_related(
+            'room_allocations__inventory_unit',
+            'room_allocations__inventory_unit_type',
+            'room_allocations__rate_snapshots',
+            'room_allocations__guests'
+        )
 
     @extend_schema(request=PriceEstimationSerializer, responses={200: dict})
     @action(detail=False, methods=['post'], url_path='estimate')
