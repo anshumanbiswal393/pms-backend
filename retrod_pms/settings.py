@@ -244,8 +244,8 @@ CACHES = {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
             'IGNORE_EXCEPTIONS': True, # Ignore exceptions when Redis is down
             'CONNECTION_POOL_KWARGS': {'max_connections': 100},
-            'SOCKET_CONNECT_TIMEOUT': 1, # Fail fast
-            'SOCKET_TIMEOUT': 1,
+            'SOCKET_CONNECT_TIMEOUT': 0.05, # Fail fast in 50ms if Redis is down
+            'SOCKET_TIMEOUT': 0.05,
         }
     }
 }
