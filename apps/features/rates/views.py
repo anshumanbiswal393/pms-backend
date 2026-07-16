@@ -208,13 +208,20 @@ class RateCalendarViewSet(viewsets.ModelViewSet):
         if not tenant:
             return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+
+        # Cache key generation based on Flipkart-like Redis caching
+        from django.core.cache import cache
+        cache_key = f"ratecalendar_tenant_{tenant.id}_prop_{property_id}_{start_date_str}_{end_date_str}"
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data, status=status.HTTP_200_OK)
+
         qs = RateCalendar.objects.filter(property_id=property_id).select_related(
             'rate_plan', 'inventory_unit_type'
         )
         
-        start_date_str = request.query_params.get('start_date')
-        end_date_str = request.query_params.get('end_date')
-
         if start_date_str:
             start_date = parse_date(start_date_str)
             if start_date:
@@ -228,10 +235,14 @@ class RateCalendarViewSet(viewsets.ModelViewSet):
         page = self.paginate_queryset(qs)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
+            data = self.get_paginated_response(serializer.data).data
+        else:
+            serializer = self.get_serializer(qs, many=True)
+            data = serializer.data
 
-        serializer = self.get_serializer(qs, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        # Save to Redis before returning
+        cache.set(cache_key, data, 60 * 15)  # Cache for 15 minutes
+        return Response(data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'], url_path='bulk-update-rates')
     def bulk_update_rates(self, request):
@@ -296,6 +307,10 @@ class RateCalendarViewSet(viewsets.ModelViewSet):
                 start_date=start_date,
                 end_date=end_date,
             )
+            
+            # Invalidate Redis Cache (Flipkart-style optimization cleanup)
+            from django.core.cache import cache
+            cache.delete_pattern(f"ratecalendar_tenant_{tenant.id}_prop_{property_id}_*") if hasattr(cache, 'delete_pattern') else cache.clear()
 
         return Response({
             'status': 'success',

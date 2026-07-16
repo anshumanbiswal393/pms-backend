@@ -25,6 +25,7 @@ from apps.features.inventory.filters import (
 from apps.features.inventory.permissions import (
     HasInventoryPermission, IsAmenityManager, IsAttributeManager, CanCloneInventoryType
 )
+from apps.core.common.mixins import RedisCacheMixin
 
 class InventoryUnitCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = InventoryUnitCategorySerializer
@@ -43,7 +44,7 @@ class InventoryUnitCategoryViewSet(viewsets.ModelViewSet):
         return InventoryUnitCategory.objects.filter(Q(tenant__isnull=True) | Q(tenant=tenant))
 
 
-class InventoryUnitTypeViewSet(viewsets.ModelViewSet):
+class InventoryUnitTypeViewSet(RedisCacheMixin, viewsets.ModelViewSet):
     serializer_class = InventoryUnitTypeSerializer
     filterset_class = InventoryUnitTypeFilter
     search_fields = ['code', 'name']
@@ -147,7 +148,7 @@ class InventoryUnitTypeViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_201_CREATED)
 
 
-class InventoryUnitViewSet(viewsets.ModelViewSet):
+class InventoryUnitViewSet(RedisCacheMixin, viewsets.ModelViewSet):
     serializer_class = InventoryUnitSerializer
     filterset_class = InventoryUnitFilter
     search_fields = ['code', 'name']

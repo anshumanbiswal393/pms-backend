@@ -111,7 +111,9 @@ class InventoryAvailabilityViewSet(viewsets.ModelViewSet):
         return Response({'status': 'success', 'created_records': created_count}, status=status.HTTP_200_OK)
 
 
-class InventoryRestrictionViewSet(viewsets.ModelViewSet):
+from apps.core.common.mixins import RedisCacheMixin
+
+class InventoryRestrictionViewSet(RedisCacheMixin, viewsets.ModelViewSet):
     serializer_class = InventoryRestrictionSerializer
     permission_classes = [IsRestrictionManager]
 
