@@ -278,6 +278,7 @@ class ReservationPackage(BaseModel):
         return f"{self.reservation.confirmation_number} -> {self.package.name}"
 
 
+
 class ReservationCoupon(BaseModel):
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='reservation_coupons')
     reservation = models.ForeignKey(Reservation, on_delete=models.CASCADE, related_name='coupons')
@@ -285,3 +286,4 @@ class ReservationCoupon(BaseModel):
 
     def __str__(self):
         return f"{self.reservation.confirmation_number} -> Coupon {self.coupon.code}"
+

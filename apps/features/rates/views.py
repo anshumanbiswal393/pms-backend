@@ -290,10 +290,12 @@ class RateCalendarViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             # Update RatePlanInventoryType base_rate (source of truth)
+            # Only target sellable inventory unit types when updating "all"
             rpit_qs = RatePlanInventoryType.objects.filter(
                 rate_plan__property_id=property_id,
                 rate_plan__is_active=True,
                 tenant=tenant,
+                inventory_unit_type__is_sellable=True,
             )
             if unit_type_id and unit_type_id != 'all':
                 rpit_qs = rpit_qs.filter(inventory_unit_type_id=unit_type_id)

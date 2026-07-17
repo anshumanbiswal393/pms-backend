@@ -8,13 +8,15 @@ from apps.features.reservations.models import (
     CorporateAccount, GroupBlock, Reservation, ReservationInventory,
     ReservationEvent
 )
+from apps.features.availability.models import WaitlistEntry
 from apps.features.reservations.serializers import (
     CorporateAccountSerializer, GroupBlockSerializer, ReservationSerializer,
     ReservationEventSerializer, CreateBookingSerializer, AssignRoomSerializer,
     ModifyRemarksSerializer, CancelReservationSerializer,
     ModifyRemarksSerializer, CancelReservationSerializer,
     SplitReservationSerializer, MergeReservationSerializer,
-    RoomUpgradeSerializer, RoomChangeSerializer, PriceEstimationSerializer
+    RoomUpgradeSerializer, RoomChangeSerializer, PriceEstimationSerializer,
+    WaitlistEntrySerializer
 )
 from apps.features.reservations.permissions import HasReservationPermission
 from apps.features.reservations.services import (
@@ -466,3 +468,132 @@ class ReservationViewSet(viewsets.ModelViewSet):
         return Response({'valid': True, 'message': 'Restrictions check successful.'}, status=status.HTTP_200_OK)
 
 
+class WaitlistViewSet(viewsets.ModelViewSet):
+    """CRUD API for waitlist entries + convert action."""
+    serializer_class = WaitlistEntrySerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        tenant = getattr(self.request, 'tenant', None)
+        if not tenant:
+            return WaitlistEntry.objects.none()
+        qs = WaitlistEntry.objects.filter(tenant=tenant).select_related('guest', 'inventory_unit_type')
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter.upper())
+        else:
+            # Default: show only PENDING (waiting) entries
+            qs = qs.filter(status='PENDING')
+        return qs.order_by('-created_at')
+
+    def perform_create(self, serializer):
+        from apps.core.tenants.models import Property
+        tenant = getattr(self.request, 'tenant', None)
+        # Get first property for tenant
+        prop = Property.objects.filter(tenant=tenant).first()
+        serializer.save(tenant=tenant, property=prop)
+
+    def create(self, request, *args, **kwargs):
+        """
+        Accept simplified payload from frontend:
+        { guest_name, email, phone, check_in_date, check_out_date,
+          inventory_unit_type_id, priority (1-3), notes }
+        """
+        from apps.features.crm.models import GuestProfile
+        from apps.features.inventory.models import InventoryUnitType
+        from apps.core.tenants.models import Property
+
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'detail': 'Tenant not found'}, status=status.HTTP_403_FORBIDDEN)
+
+        data = request.data
+        prop = Property.objects.filter(tenant=tenant).first()
+
+        # Resolve or create guest profile
+        guest = None
+        guest_name = data.get('guest_name', '')
+        email = data.get('email', '')
+        if email:
+            guest = GuestProfile.objects.filter(tenant=tenant, contacts__email=email).first()
+        if not guest and guest_name:
+            parts = guest_name.strip().split(' ', 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else 'Guest'
+            try:
+                guest = GuestProfile.objects.create(
+                    tenant=tenant, first_name=first_name, last_name=last_name,
+                    guest_type='DOMESTIC'
+                )
+            except Exception:
+                pass
+
+        # Resolve room type (either UUID or Name)
+        unit_type = None
+        unit_type_id = data.get('inventory_unit_type_id') or data.get('room_type_id')
+        if unit_type_id:
+            import uuid
+            is_uuid = False
+            try:
+                uuid.UUID(str(unit_type_id))
+                is_uuid = True
+            except (ValueError, AttributeError):
+                pass
+
+            if is_uuid:
+                try:
+                    unit_type = InventoryUnitType.objects.get(id=unit_type_id, tenant=tenant)
+                except InventoryUnitType.DoesNotExist:
+                    pass
+            else:
+                try:
+                    unit_type = InventoryUnitType.objects.get(name__iexact=unit_type_id, tenant=tenant)
+                except InventoryUnitType.DoesNotExist:
+                    pass
+
+        if not unit_type:
+            return Response({'detail': 'Valid room type required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        priority_map = {'HIGH': 3, 'NORMAL': 2, 'LOW': 1}
+        priority_str = str(data.get('priority', 'NORMAL')).upper()
+        priority_int = priority_map.get(priority_str, 2)
+
+        try:
+            entry = WaitlistEntry.objects.create(
+                tenant=tenant,
+                property=prop,
+                guest=guest,
+                email_snapshot=email,
+                phone_snapshot=data.get('phone', ''),
+                inventory_unit_type=unit_type,
+                check_in_date=data.get('check_in_date'),
+                check_out_date=data.get('check_out_date'),
+                priority=priority_int,
+                status='PENDING',
+            )
+            return Response(WaitlistEntrySerializer(entry).data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'], url_path='convert')
+    def convert(self, request, pk=None):
+        """Mark waitlist entry as CONVERTED."""
+        entry = self.get_object()
+        if entry.status != 'PENDING':
+            return Response(
+                {'detail': f'Entry is already {entry.status}.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        from django.utils import timezone
+        entry.status = 'CONVERTED'
+        entry.converted_at = timezone.now()
+        entry.converted_by = request.user
+        entry.save(update_fields=['status', 'converted_at', 'converted_by', 'updated_at'])
+        return Response(WaitlistEntrySerializer(entry).data)
+
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel_entry(self, request, pk=None):
+        entry = self.get_object()
+        entry.status = 'CANCELLED'
+        entry.save(update_fields=['status', 'updated_at'])
+        return Response(WaitlistEntrySerializer(entry).data)

@@ -158,3 +158,70 @@ class RoomChangeSerializer(serializers.Serializer):
     allocation_id = serializers.UUIDField()
     new_room_id = serializers.UUIDField()
 
+
+class WaitlistEntrySerializer(serializers.ModelSerializer):
+    guest_name = serializers.SerializerMethodField()
+    room_type_display = serializers.SerializerMethodField()
+    dates_display = serializers.SerializerMethodField()
+    priority_display = serializers.SerializerMethodField()
+    wl_number = serializers.SerializerMethodField()
+
+    class Meta:
+        from apps.features.availability.models import WaitlistEntry
+        model = WaitlistEntry
+        fields = [
+            'id', 'wl_number', 'guest', 'guest_name', 'email_snapshot', 'phone_snapshot',
+            'inventory_unit_type', 'room_type_display',
+            'check_in_date', 'check_out_date', 'dates_display',
+            'priority', 'priority_display', 'status', 'created_at',
+        ]
+        read_only_fields = ('id', 'created_at', 'wl_number', 'guest_name', 'room_type_display', 'dates_display', 'priority_display')
+
+    def get_wl_number(self, obj):
+        """Generate a WL display number from the object's ID sequence."""
+        # Use the integer representation of part of the UUID for a stable short ID
+        return f"WL-{str(obj.id)[:6].upper()}"
+
+    def get_guest_name(self, obj):
+        if obj.guest:
+            return f"{obj.guest.first_name} {obj.guest.last_name}".strip()
+        return obj.email_snapshot or 'Unknown Guest'
+
+    def get_room_type_display(self, obj):
+        if obj.inventory_unit_type:
+            return obj.inventory_unit_type.name
+        return ''
+
+    def get_dates_display(self, obj):
+        import datetime
+        ci = obj.check_in_date
+        co = obj.check_out_date
+        if not ci or not co:
+            return ''
+            
+        if isinstance(ci, str):
+            try:
+                ci = datetime.date.fromisoformat(ci)
+            except ValueError:
+                pass
+        if isinstance(co, str):
+            try:
+                co = datetime.date.fromisoformat(co)
+            except ValueError:
+                pass
+                
+        if hasattr(ci, 'month') and hasattr(co, 'month'):
+            months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+            if ci.month == co.month:
+                return f"{ci.day}–{co.day} {months[ci.month - 1]}"
+            return f"{ci.day} {months[ci.month - 1]}–{co.day} {months[co.month - 1]}"
+        return f"{ci}–{co}"
+
+    def get_priority_display(self, obj):
+        p = obj.priority
+        if p >= 3:
+            return 'High'
+        elif p == 2:
+            return 'Normal'
+        return 'Low'
+

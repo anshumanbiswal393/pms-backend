@@ -56,6 +56,8 @@ class HasReservationPermission(permissions.BasePermission):
         if not property_id:
             user_roles = UserPropertyRole.objects.filter(user=request.user, tenant=tenant)
             for ur in user_roles:
+                if 'owner' in ur.role.name.lower():
+                    return True
                 if ur.role.permissions.filter(permission__code=perm_code).exists():
                     return True
             return False
@@ -69,5 +71,8 @@ class HasReservationPermission(permissions.BasePermission):
 
         if not user_property_role:
             return False
+
+        if 'owner' in user_property_role.role.name.lower():
+            return True
 
         return user_property_role.role.permissions.filter(permission__code=perm_code).exists()
