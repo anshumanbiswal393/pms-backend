@@ -115,6 +115,9 @@ urlpatterns = [
     # Guest CRM Domain Endpoints
     path('api/crm/', include('apps.features.crm.urls')),
     
+    # B2B Partners Endpoint
+    path('api/b2b/', include('apps.features.b2b.urls')),
+    
     # Global Reference Data Endpoints
     path('api/reference/', include('apps.core.reference.urls')),
 

@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     'apps.features.front_office',
     'apps.features.housekeeping',
     'apps.features.billing',
+    'apps.features.b2b',
 ]
 
 MIDDLEWARE = [

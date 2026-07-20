@@ -10,17 +10,22 @@ class LostFoundItem(BaseModel):
         ('FOUND', 'Found'),
     )
     STATUS_CHOICES = (
-        ('REPORTED', 'Reported'),
-        ('CLAIMED', 'Claimed'),
+        ('REPORTED', 'Reported'),          # Open / Reported
+        ('MATCHED', 'Matched'),
+        ('AWAITING_CLAIM', 'Awaiting Claim'),
+        ('CLAIMED', 'Claimed'),            # Released / Claimed
         ('DISPOSED', 'Disposed'),
     )
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='lost_found_items')
     property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='lost_found_items')
+    reference_number = models.CharField(max_length=32, unique=True, null=True, blank=True)
     item_type = models.CharField(max_length=16, choices=ITEM_TYPE_CHOICES, default='FOUND')
     item_name = models.CharField(max_length=120)
     description = models.TextField()
     location_found = models.CharField(max_length=255, null=True, blank=True)
+    finder_name = models.CharField(max_length=120, null=True, blank=True)
+    image = models.FileField(upload_to='lost_found/', null=True, blank=True)
     reported_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -47,6 +52,9 @@ class LostFoundItem(BaseModel):
             raise ValidationError("Disposed items must specify a reason in 'disposed_reason'.")
 
     def save(self, *args, **kwargs):
+        if not self.reference_number:
+            count = LostFoundItem.objects.all_with_deleted().filter(tenant=self.tenant).count()
+            self.reference_number = f"LF-{301 + count}"
         self.clean()
         super().save(*args, **kwargs)
 
