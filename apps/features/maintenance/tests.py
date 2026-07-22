@@ -44,10 +44,14 @@ class MaintenanceAPITests(APITestCase):
             'title': 'AC Leaking',
             'description': 'Water leaking from indoor unit',
             'priority': 'HIGH',
-            'status': 'OPEN'
+            'status': 'REPORTED',
+            'category': 'HVAC'
         }, format='json')
         self.assertEqual(response.status_code, 201)
         ticket_id = response.data['id']
+        self.assertEqual(response.data['status'], 'REPORTED')
+        self.assertEqual(response.data['category'], 'HVAC')
+        self.assertEqual(response.data['room_location'], f"Room {self.unit.name}")
 
         # 2. Assign Ticket
         assign_res = self.client.post('/api/maintenance/assign/', {
@@ -55,19 +59,33 @@ class MaintenanceAPITests(APITestCase):
             'user_id': str(self.user.id)
         }, format='json')
         self.assertEqual(assign_res.status_code, 200)
-        self.assertEqual(assign_res.data['status'], 'ASSIGNED')
+        self.assertEqual(assign_res.data['status'], 'IN_PROGRESS')
         
         # Verify InventoryUnit maintenance status updated to active
         self.unit.refresh_from_db()
         self.assertEqual(self.unit.maintenance_status, 'active')
+
+        # Test Stats endpoint before completing
+        stats_res = self.client.get('/api/maintenance/tickets/stats/')
+        self.assertEqual(stats_res.status_code, 200)
+        self.assertEqual(stats_res.data['open_work_orders'], 1)
+        # Note: Rooms OOO count is based on operational_status in ['maintenance', 'offline']. Let's verify structure.
+        self.assertIn('rooms_ooo', stats_res.data)
+        self.assertIn('pm_due_this_week', stats_res.data)
 
         # 3. Complete Ticket
         complete_res = self.client.post('/api/maintenance/complete/', {
             'ticket_id': ticket_id
         }, format='json')
         self.assertEqual(complete_res.status_code, 200)
-        self.assertEqual(complete_res.data['status'], 'COMPLETED')
+        self.assertEqual(complete_res.data['status'], 'RESOLVED')
 
         # Verify InventoryUnit maintenance status reset to none
         self.unit.refresh_from_db()
         self.assertEqual(self.unit.maintenance_status, 'none')
+
+        # Test Stats endpoint after completing
+        stats_res2 = self.client.get('/api/maintenance/tickets/stats/')
+        self.assertEqual(stats_res2.status_code, 200)
+        self.assertEqual(stats_res2.data['open_work_orders'], 0)
+        self.assertGreaterEqual(stats_res2.data['avg_resolution_hours'], 0.0)
