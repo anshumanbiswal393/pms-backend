@@ -90,6 +90,23 @@ class Reservation(BaseModel):
     corporate_gst_number = models.CharField(max_length=32, null=True, blank=True)
     corporate_travel_purpose = models.CharField(max_length=64, null=True, blank=True)
 
+    # Check-in and Check-out custom times
+    check_in_time = models.CharField(max_length=32, null=True, blank=True, default="12:00 PM")
+    check_out_time = models.CharField(max_length=32, null=True, blank=True, default="11:00 AM")
+
+    # Event / Banquet specific fields
+    event_venue = models.CharField(max_length=120, null=True, blank=True)
+    event_type = models.CharField(max_length=120, null=True, blank=True)
+    event_pax = models.IntegerField(default=0, null=True, blank=True)
+    event_start_time = models.CharField(max_length=32, null=True, blank=True)
+    event_end_time = models.CharField(max_length=32, null=True, blank=True)
+    event_organizer_name = models.CharField(max_length=120, null=True, blank=True)
+    event_organizer_contact = models.CharField(max_length=32, null=True, blank=True)
+    event_organizer_email = models.EmailField(null=True, blank=True)
+    event_organizer_billing_address = models.TextField(null=True, blank=True)
+    event_seating_arrangement = models.CharField(max_length=120, null=True, blank=True)
+    event_catering_menu = models.CharField(max_length=120, null=True, blank=True)
+
     class Meta:
         indexes = [
             models.Index(fields=['tenant', 'arrival_date', 'departure_date']),

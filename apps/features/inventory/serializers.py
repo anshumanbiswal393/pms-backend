@@ -61,20 +61,43 @@ class InventoryUnitTypeSerializer(serializers.ModelSerializer):
         validated_data['tenant'] = tenant
         validated_data['created_by'] = request.user if request and request.user.is_authenticated else None
         
-        # Extract amenities from request data
-        amenities_data = request.data.get('amenities', [])
-        
-        instance = super().create(validated_data)
-        
-        # Save amenities
-        for code in amenities_data:
-            amenity = Amenity.objects.filter(models.Q(tenant=tenant) | models.Q(tenant__isnull=True), code=code).first()
-            if amenity:
-                InventoryUnitTypeAmenity.objects.get_or_create(
+    def _save_amenities(self, instance, amenities_data, tenant):
+        # Hard delete existing relation records (including soft-deleted ones)
+        # to prevent PostgreSQL unique constraint "unique_type_amenity_pair" clashes.
+        InventoryUnitTypeAmenity.objects.all_with_deleted().filter(
+            inventory_unit_type=instance
+        ).hard_delete()
+
+        seen_amenities = set()
+        for item in amenities_data:
+            val = item.get('code') or item.get('id') if isinstance(item, dict) else item
+            if not val:
+                continue
+
+            amenity_qs = Amenity.objects.filter(
+                models.Q(tenant=tenant) | models.Q(tenant__isnull=True)
+            )
+            amenity = amenity_qs.filter(models.Q(code=val) | models.Q(id=val)).first()
+
+            if amenity and amenity.id not in seen_amenities:
+                seen_amenities.add(amenity.id)
+                InventoryUnitTypeAmenity.objects.create(
                     tenant=tenant,
                     inventory_unit_type=instance,
                     amenity=amenity
                 )
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None)
+        validated_data['tenant'] = tenant
+        validated_data['created_by'] = request.user if request and request.user.is_authenticated else None
+        
+        amenities_data = request.data.get('amenities', [])
+        instance = super().create(validated_data)
+        
+        if amenities_data:
+            self._save_amenities(instance, amenities_data, tenant)
         return instance
 
     def update(self, instance, validated_data):
@@ -85,20 +108,14 @@ class InventoryUnitTypeSerializer(serializers.ModelSerializer):
         
         if 'amenities' in request.data:
             amenities_data = request.data.get('amenities', [])
-            InventoryUnitTypeAmenity.objects.filter(inventory_unit_type=instance).delete()
-            for code in amenities_data:
-                amenity = Amenity.objects.filter(models.Q(tenant=tenant) | models.Q(tenant__isnull=True), code=code).first()
-                if amenity:
-                    InventoryUnitTypeAmenity.objects.get_or_create(
-                        tenant=tenant,
-                        inventory_unit_type=instance,
-                        amenity=amenity
-                    )
+            self._save_amenities(instance, amenities_data, tenant)
         return instance
 
 
 class InventoryUnitSerializer(serializers.ModelSerializer):
     assigned_staff = serializers.SerializerMethodField()
+    building_name = serializers.CharField(source='building.name', read_only=True)
+    floor_name = serializers.CharField(source='floor_id.name', read_only=True)
 
     class Meta:
         model = InventoryUnit

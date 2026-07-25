@@ -588,19 +588,18 @@ class ForgotPasswordView(APIView):
             # Print/log token
             print(f"\n--- [RESET TOKEN] {token} for user {user.email} ---\n")
             
-            # Send email (mock)
-            from django.core.mail import send_mail
-            from django.conf import settings
-            try:
-                send_mail(
-                    subject='Retrod PMS Password Reset Request',
-                    message=f'Use this token to reset your password: {token}. It is valid for 15 minutes.',
-                    from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'no-reply@retrod.io'),
-                    recipient_list=[user.email],
-                    fail_silently=False,
-                )
-            except Exception:
-                pass
+            # Send password reset token email via UnifiedMailService
+            from apps.core.common.email_service import UnifiedMailService
+            UnifiedMailService.send_email(
+                email_type="GENERIC",
+                recipient_email=user.email,
+                recipient_name=getattr(user, 'first_name', '') or user.username,
+                subject="Retrod PMS Password Reset Request",
+                data={
+                    "title": "Password Reset Request",
+                    "message": f"You requested a password reset. Use this token to reset your password: {token}. It is valid for 15 minutes."
+                }
+            )
 
             return Response({
                 'message': 'Password reset link sent to email.',

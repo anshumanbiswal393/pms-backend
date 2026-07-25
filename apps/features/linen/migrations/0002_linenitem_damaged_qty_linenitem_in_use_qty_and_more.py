@@ -10,7 +10,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('linen', '0001_initial'),
-        ('reservations', '0006_banquetbooking'),
+        ('reservations', '0009_reservation_check_in_time_reservation_check_out_time'),
         ('tenants', '0010_alter_property_google_map_url'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]

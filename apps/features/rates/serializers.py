@@ -232,6 +232,22 @@ class RateCalendarSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('id',)
 
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        if instance.inventory_unit_type:
+            rep['inventory_unit_type'] = {
+                'id': str(instance.inventory_unit_type.id),
+                'name': instance.inventory_unit_type.name,
+                'code': instance.inventory_unit_type.code,
+            }
+        if instance.rate_plan:
+            rep['rate_plan'] = {
+                'id': str(instance.rate_plan.id),
+                'name': instance.rate_plan.name,
+                'code': instance.rate_plan.code,
+            }
+        return rep
+
     def validate(self, data):
         prop = data.get('property')
         rp = data.get('rate_plan')

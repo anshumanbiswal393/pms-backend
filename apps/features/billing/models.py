@@ -102,6 +102,8 @@ class BillingAdjustment(BaseModel):
         ('DISCOUNT', 'Discount Adjustment'),
         ('REFUND', 'Refund Posting'),
         ('REVERSAL', 'Charge Reversal'),
+        ('TRANSFER', 'Folio Transfer'),
+        ('SPLIT', 'Folio Split'),
     )
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='billing_adjustments')

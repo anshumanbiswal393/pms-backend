@@ -37,11 +37,16 @@ from apps.core.common.views import (
     SystemDocumentTypeViewSet, SystemCurrencyViewSet,
     SystemDateFormatViewSet, SystemTimeFormatViewSet,
     DepartmentViewSet, ShiftViewSet, OccupancyTypeViewSet,
-    BookingSourceViewSet
+    BookingSourceViewSet, PaymentGatewayViewSet, TenantPaymentGatewayViewSet,
+    UnifiedSendEmailView
 )
+from apps.core.common.razorpay_views import CreateRazorpayOrderView, VerifyRazorpaySignatureView
 
 # Initialize DRF Router
 router = DefaultRouter()
+
+router.register(r'superadmin-payment-gateways', PaymentGatewayViewSet, basename='superadminpaymentgateways')
+router.register(r'tenant-payment-gateways', TenantPaymentGatewayViewSet, basename='tenantpaymentgateways')
 
 # Tenants & Properties
 router.register(r'tenants', TenantViewSet, basename='tenant')
@@ -118,8 +123,15 @@ urlpatterns = [
     # B2B Partners Endpoint
     path('api/b2b/', include('apps.features.b2b.urls')),
     
+    # Billing & Financial Adjustments Domain Endpoints
+    path('api/billing/', include('apps.features.billing.urls')),
+    
     # Global Reference Data Endpoints
     path('api/reference/', include('apps.core.reference.urls')),
+
+    # Unified Central Email Service Endpoint
+    path('api/common/send-email/', UnifiedSendEmailView.as_view(), name='unified_send_email'),
+    path('api/send-email/', UnifiedSendEmailView.as_view(), name='unified_send_email_alias'),
 
     # Reservation Domain Endpoints
     path('api/reservations/', include('apps.features.reservations.urls')),
@@ -191,6 +203,10 @@ urlpatterns = [
     path('api/security/sso/', SSOConfigurationViewSet.as_view({'get': 'list', 'post': 'create'}), name='sso_list'),
     path('api/security/sso/<uuid:pk>/', SSOConfigurationViewSet.as_view({'put': 'update'}), name='sso_detail'),
     path('api/tenant/request-subscription/', RequestSubscriptionView.as_view(), name='request_subscription'),
+
+    # Razorpay Payment Integration
+    path('api/payments/razorpay/create-order/', CreateRazorpayOrderView.as_view(), name='razorpay_create_order'),
+    path('api/payments/razorpay/verify-signature/', VerifyRazorpaySignatureView.as_view(), name='razorpay_verify_signature'),
     
     # OpenAPI Schema & Swagger
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

@@ -2,7 +2,8 @@ from rest_framework import serializers
 from apps.core.common.models import (
     SystemLanguage, SystemTax, SystemDocumentType,
     SystemCurrency, SystemDateFormat, SystemTimeFormat,
-    Department, Shift, OccupancyType, BookingSource
+    Department, Shift, OccupancyType, BookingSource,
+    PaymentGateway, TenantPaymentGateway
 )
 
 class SystemLanguageSerializer(serializers.ModelSerializer):
@@ -58,3 +59,18 @@ class BookingSourceSerializer(serializers.ModelSerializer):
     class Meta:
         model = BookingSource
         fields = '__all__'
+
+
+class PaymentGatewaySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentGateway
+        fields = '__all__'
+
+
+class TenantPaymentGatewaySerializer(serializers.ModelSerializer):
+    gateway_details = PaymentGatewaySerializer(source='gateway', read_only=True)
+
+    class Meta:
+        model = TenantPaymentGateway
+        fields = '__all__'
+

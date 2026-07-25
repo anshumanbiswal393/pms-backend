@@ -102,32 +102,23 @@ class LostFoundItemViewSet(viewsets.ModelViewSet):
         except GuestProfile.DoesNotExist:
             return Response({'error': 'Guest not found.'}, status=status.HTTP_442_UNPROCESSABLE_ENTITY if False else status.HTTP_404_NOT_FOUND)
 
-        from django.core.mail import send_mail
         primary_contact = guest.contacts.filter(is_primary=True).first()
         guest_email = primary_contact.email if primary_contact else None
         
         if guest_email:
-            subject = f"Found Item Notification: {item.item_name}"
-            body = (
-                f"Dear {guest.first_name} {guest.last_name},\n\n"
-                f"We are writing to inform you that we found an item matching your description:\n"
-                f"Item: {item.item_name}\n"
-                f"Location Found: {item.location_found}\n"
-                f"Description: {item.description}\n\n"
-                f"Please reply to this email or contact front desk to arrange return.\n\n"
-                f"Best regards,\n"
-                f"{item.property.name} Team"
+            from apps.core.common.email_service import UnifiedMailService
+            UnifiedMailService.send_email(
+                email_type="LOST_FOUND",
+                recipient_email=guest_email,
+                recipient_name=f"{guest.first_name} {guest.last_name}",
+                property_obj=item.property,
+                data={
+                    "item_name": item.item_name,
+                    "found_date": str(item.created_at.date()) if hasattr(item, 'created_at') else "Recent",
+                    "location": item.location_found,
+                    "description": item.description
+                }
             )
-            try:
-                send_mail(
-                    subject,
-                    body,
-                    settings.DEFAULT_FROM_EMAIL,
-                    [guest_email],
-                    fail_silently=False
-                )
-            except Exception:
-                pass
         
         item.guest_name = f"{guest.first_name} {guest.last_name}"
         if primary_contact:

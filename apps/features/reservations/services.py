@@ -202,12 +202,25 @@ class BookingEngine:
             market_segment=booking_data.get('market_segment', 'Direct'),
             origin_country_id=booking_data.get('origin_country_id'),
             confirmation_number=conf_no,
+            check_in_time=booking_data.get('check_in_time', '12:00 PM'),
+            check_out_time=booking_data.get('check_out_time', '11:00 AM'),
             corporate_po_ref=booking_data.get('corporate_po_ref'),
             corporate_billing_type=booking_data.get('corporate_billing_type'),
             corporate_employee_id=booking_data.get('corporate_employee_id'),
             corporate_cost_center=booking_data.get('corporate_cost_center'),
             corporate_gst_number=booking_data.get('corporate_gst_number'),
-            corporate_travel_purpose=booking_data.get('corporate_travel_purpose')
+            corporate_travel_purpose=booking_data.get('corporate_travel_purpose'),
+            event_venue=booking_data.get('event_venue'),
+            event_type=booking_data.get('event_type'),
+            event_pax=booking_data.get('event_pax', 0),
+            event_start_time=booking_data.get('event_start_time'),
+            event_end_time=booking_data.get('event_end_time'),
+            event_organizer_name=booking_data.get('event_organizer_name'),
+            event_organizer_contact=booking_data.get('event_organizer_contact'),
+            event_organizer_email=booking_data.get('event_organizer_email'),
+            event_organizer_billing_address=booking_data.get('event_organizer_billing_address'),
+            event_seating_arrangement=booking_data.get('event_seating_arrangement'),
+            event_catering_menu=booking_data.get('event_catering_menu')
         )
 
         total_amount = Decimal('0.00')

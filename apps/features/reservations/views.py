@@ -49,7 +49,11 @@ class GroupBlockViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
             return GroupBlock.objects.none()
-        return GroupBlock.objects.filter(tenant=tenant)
+        qs = GroupBlock.objects.filter(tenant=tenant)
+        property_id = self.request.query_params.get('property_id')
+        if property_id:
+            qs = qs.filter(property_id=property_id)
+        return qs
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, 'tenant', None)
@@ -577,18 +581,91 @@ class WaitlistViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='convert')
     def convert(self, request, pk=None):
-        """Mark waitlist entry as CONVERTED."""
+        """Mark waitlist entry as CONVERTED and create Reservation."""
         entry = self.get_object()
         if entry.status != 'PENDING':
             return Response(
                 {'detail': f'Entry is already {entry.status}.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        from django.utils import timezone
-        entry.status = 'CONVERTED'
-        entry.converted_at = timezone.now()
-        entry.converted_by = request.user
-        entry.save(update_fields=['status', 'converted_at', 'converted_by', 'updated_at'])
+        
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'detail': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1. Resolve guest profile
+        guest = entry.guest
+        if not guest:
+            from apps.features.crm.models import GuestProfile, GuestContact
+            guest_name_val = entry.email_snapshot or 'Waitlist Guest'
+            parts = guest_name_val.split(' ', 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else 'Guest'
+            try:
+                guest = GuestProfile.objects.create(
+                    tenant=tenant,
+                    first_name=first_name,
+                    last_name=last_name,
+                    guest_type='DOMESTIC'
+                )
+                GuestContact.objects.create(
+                    tenant=tenant,
+                    guest=guest,
+                    email=entry.email_snapshot,
+                    phone=entry.phone_snapshot,
+                    is_primary=True
+                )
+                entry.guest = guest
+                entry.save(update_fields=['guest'])
+            except Exception as e:
+                return Response({'detail': f'Failed to create guest profile: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. Call BookingEngine.create_booking to create actual reservation
+        from apps.features.reservations.services import BookingEngine
+        from apps.features.rates.models import RatePlan
+        
+        # Get first active rate plan for the property
+        rate_plan = RatePlan.objects.filter(property=entry.property, is_active=True).first()
+        rate_plan_id = str(rate_plan.id) if rate_plan else None
+        
+        booking_data = {
+            'primary_guest_id': guest.id,
+            'arrival_date': entry.check_in_date,
+            'departure_date': entry.check_out_date,
+            'reservation_type': 'Individual',
+            'market_segment': 'Direct',
+            'notes': 'Converted from Waitlist Entry',
+            'allocations': [
+                {
+                    'inventory_unit_type_id': entry.inventory_unit_type.id,
+                    'check_in_date': entry.check_in_date,
+                    'check_out_date': entry.check_out_date,
+                    'adult_count': 2,
+                    'child_count': 0,
+                    'rate_plan_id': rate_plan_id,
+                }
+            ]
+        }
+        
+        try:
+            from django.db import transaction
+            with transaction.atomic():
+                reservation = BookingEngine.create_booking(
+                    tenant=tenant,
+                    property_obj=entry.property,
+                    booking_data=booking_data,
+                    user=request.user
+                )
+                
+                from django.utils import timezone
+                entry.status = 'CONVERTED'
+                entry.converted_at = timezone.now()
+                entry.converted_by = request.user
+                entry.reservation = reservation
+                entry.save(update_fields=['status', 'converted_at', 'converted_by', 'reservation', 'updated_at'])
+        except Exception as e:
+            return Response({'detail': f'Failed to create reservation: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
         return Response(WaitlistEntrySerializer(entry).data)
 
     @action(detail=True, methods=['post'], url_path='cancel')

@@ -289,27 +289,37 @@ class RateCalendarViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Invalid rate value.'}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
-            # Update RatePlanInventoryType base_rate (source of truth)
-            # Only target sellable inventory unit types when updating "all"
-            rpit_qs = RatePlanInventoryType.objects.filter(
-                rate_plan__property_id=property_id,
-                rate_plan__is_active=True,
-                tenant=tenant,
-                inventory_unit_type__is_sellable=True,
-            )
-            if unit_type_id and unit_type_id != 'all':
-                rpit_qs = rpit_qs.filter(inventory_unit_type_id=unit_type_id)
-
-            updated_count = rpit_qs.update(base_rate=new_rate_decimal)
-
-            # Rebuild calendar so RateCalendar rows reflect new rates
-            rebuilt = RateCalendarService.rebuild_calendar(
-                tenant=tenant,
+            # Find all active rate plans for the property
+            rate_plans = RatePlan.objects.filter(
                 property_id=property_id,
-                start_date=start_date,
-                end_date=end_date,
+                is_active=True,
+                tenant=tenant,
+                # inventory_unit_type__is_sellable=True,
             )
-            
+            # Find target room types (sellable only if 'all')
+            from apps.features.inventory.models import InventoryUnitType
+            ut_qs = InventoryUnitType.objects.filter(property_id=property_id, tenant=tenant)
+            if unit_type_id and unit_type_id != 'all':
+                ut_qs = ut_qs.filter(id=unit_type_id)
+            else:
+                ut_qs = ut_qs.filter(is_sellable=True)
+
+            # Direct RateCalendar update/create for each date, plan, and room type
+            updated_count = 0
+            curr_date = start_date
+            while curr_date <= end_date:
+                for rp in rate_plans:
+                    for ut in ut_qs:
+                        RateCalendar.objects.update_or_create(
+                            property_id=property_id,
+                            date=curr_date,
+                            rate_plan=rp,
+                            inventory_unit_type=ut,
+                            defaults={'amount': new_rate_decimal}
+                        )
+                        updated_count += 1
+                curr_date += timedelta(days=1)
+
             # Invalidate Redis Cache (Flipkart-style optimization cleanup)
             from django.core.cache import cache
             cache.delete_pattern(f"ratecalendar_tenant_{tenant.id}_prop_{property_id}_*") if hasattr(cache, 'delete_pattern') else cache.clear()
@@ -317,7 +327,7 @@ class RateCalendarViewSet(viewsets.ModelViewSet):
         return Response({
             'status': 'success',
             'rate_plans_updated': updated_count,
-            'calendar_records_rebuilt': rebuilt,
+            'calendar_records_rebuilt': updated_count,
             'date_range': {'start': start_date_str, 'end': end_date_str},
         }, status=status.HTTP_200_OK)
 

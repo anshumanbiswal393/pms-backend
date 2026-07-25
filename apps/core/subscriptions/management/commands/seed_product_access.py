@@ -136,7 +136,6 @@ class Command(BaseCommand):
             license_count += 1
         self.stdout.write(self.style.SUCCESS(f"Generated {license_count} active product licenses."))
 
-        # 6. Seed Entitlements
         entitlements_to_seed = [
             ("PMS", "MAX_ROOMS", "NUMERIC", 150),
             ("PMS", "MAX_USERS", "NUMERIC", 20),
@@ -144,7 +143,8 @@ class Command(BaseCommand):
             ("PMS", "MULTI_PROPERTY", "BOOLEAN", False),
             ("CRM", "MAX_LEADS", "NUMERIC", 1000),
             ("CRM", "API_ACCESS", "BOOLEAN", True),
-            ("HOUSEKEEPING", "MAX_ASSETS", "NUMERIC", 500)
+            ("HOUSEKEEPING", "MAX_ASSETS", "NUMERIC", 500),
+            ("HOUSEKEEPING", "HOUSEKEEPING.MAINTENANCE", "BOOLEAN", True)
         ]
 
         ent_count = 0

@@ -212,3 +212,43 @@ class BookingSource(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class PaymentGateway(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=120)
+    code = models.CharField(max_length=64, unique=True)
+    subtitle = models.CharField(max_length=255, blank=True, default="")
+    badge = models.CharField(max_length=64, blank=True, default="SECURE")
+    logo_url = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    is_default = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'system_payment_gateways'
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
+class TenantPaymentGateway(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, related_name='tenant_payment_gateways', null=True, blank=True)
+    gateway = models.ForeignKey(PaymentGateway, on_delete=models.CASCADE, related_name='tenant_configs')
+    is_enabled = models.BooleanField(default=True)
+    api_key = models.CharField(max_length=255, blank=True, default="")
+    api_secret = models.CharField(max_length=255, blank=True, default="")
+    merchant_id = models.CharField(max_length=255, blank=True, default="")
+    extra_config = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'tenant_payment_gateways'
+        unique_together = ('tenant', 'gateway')
+
+    def __str__(self):
+        return f"{self.tenant} - {self.gateway.name} ({'Enabled' if self.is_enabled else 'Disabled'})"
+

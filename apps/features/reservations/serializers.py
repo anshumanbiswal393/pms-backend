@@ -110,6 +110,23 @@ class CreateBookingSerializer(serializers.Serializer):
     corporate_gst_number = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     corporate_travel_purpose = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
+    # Check-in and Check-out custom times
+    check_in_time = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    check_out_time = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    # Event fields
+    event_venue = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    event_type = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    event_pax = serializers.IntegerField(required=False, default=0)
+    event_start_time = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    event_end_time = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    event_organizer_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    event_organizer_contact = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    event_organizer_email = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    event_organizer_billing_address = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    event_seating_arrangement = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    event_catering_menu = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
 
 class PriceEstimationSerializer(serializers.Serializer):
     arrival_date = serializers.DateField()

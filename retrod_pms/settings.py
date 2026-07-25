@@ -22,6 +22,8 @@ if env_file.exists():
 SECRET_KEY = env('SECRET_KEY')
 DEBUG = env('DEBUG')
 ALLOWED_HOSTS = env('ALLOWED_HOSTS')
+RAZORPAY_KEY_ID = env('RAZORPAY_KEY_ID', default='')
+RAZORPAY_KEY_SECRET = env('RAZORPAY_KEY_SECRET', default='')
 
 # Application definition
 INSTALLED_APPS = [
@@ -200,7 +202,7 @@ REST_FRAMEWORK = {
 
 # JWT Token configuration
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
