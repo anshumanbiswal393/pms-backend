@@ -191,5 +191,12 @@ class Command(BaseCommand):
                 pass
         self.stdout.write(self.style.SUCCESS(f"Successfully seeded {state_count} states."))
 
+        # 8. Seed RBAC Permissions & Roles
+        try:
+            from django.core.management import call_command
+            call_command('seed_rbac_permissions')
+        except Exception as e:
+            self.stdout.write(self.style.WARNING(f"RBAC seeding warning: {e}"))
+
         self.stdout.write(self.style.SUCCESS("Global reference data seeding completed!"))
 
