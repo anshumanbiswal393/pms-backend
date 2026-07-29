@@ -20,8 +20,18 @@ def check_user_permission(user, tenant, perm_codes, property_id=None):
     if user.is_superuser or user.is_staff:
         return True
 
-    # 2. Tenant Owner / Admin Check
-    if user.role and (user.role.code in ['owner', 'tenant_owner', 'admin', 'super_admin'] or 'owner' in user.role.name.lower() or 'admin' in user.role.name.lower()):
+    # Get role string regardless of string vs object
+    role_str = ""
+    if hasattr(user, 'role') and user.role:
+        if isinstance(user.role, str):
+            role_str = user.role.lower()
+        elif hasattr(user.role, 'code') and user.role.code:
+            role_str = str(user.role.code).lower()
+        elif hasattr(user.role, 'name') and user.role.name:
+            role_str = str(user.role.name).lower()
+
+    # 2. Tenant Owner / Admin Check -> ALWAYS Granted
+    if role_str in ['owner', 'tenant_owner', 'admin', 'super_admin', 'superadmin', 'manager'] or 'owner' in role_str or 'admin' in role_str:
         return True
 
     if isinstance(perm_codes, str):

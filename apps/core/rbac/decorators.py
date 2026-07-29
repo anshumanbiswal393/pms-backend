@@ -5,29 +5,54 @@ from apps.core.rbac.models import UserPropertyRole
 def check_property_access(user, tenant, property_id):
     """
     Checks if a user has access to a specific property.
-    Superusers and Tenant Owners bypass checking.
+    Superusers, Staff, Admins, Tenant Owners, and unrestricted tenant users bypass property restriction checking.
     """
-    if not user.is_authenticated:
+    if not user or not user.is_authenticated:
         return False
         
-    # Superusers and Tenant Owners bypass property checks
-    if user.is_superuser or user.is_staff or (user.role and user.role.code in ['owner', 'tenant_owner', 'admin', 'super_admin']) or (user.role and 'owner' in user.role.name.lower()):
+    # 1. Superusers & Staff
+    if getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False):
+        return True
+
+    # 2. Get role string regardless of whether user.role is a string or Role object
+    role_str = ""
+    if hasattr(user, 'role') and user.role:
+        if isinstance(user.role, str):
+            role_str = user.role.lower()
+        elif hasattr(user.role, 'code') and user.role.code:
+            role_str = str(user.role.code).lower()
+        elif hasattr(user.role, 'name') and user.role.name:
+            role_str = str(user.role.name).lower()
+
+    if (
+        role_str in ['owner', 'tenant_owner', 'admin', 'super_admin', 'superadmin', 'manager'] or 
+        'owner' in role_str or 
+        'admin' in role_str
+    ):
+        return True
+
+    from django.db.models import Q
+    from apps.core.accounts.models import UserAssignment
+    # 3. If user has no specific property assignments under this tenant, they have full tenant-wide property access
+    has_any_restrictions = UserAssignment.objects.filter(user=user, tenant=tenant, property__isnull=False).exists() or UserPropertyRole.objects.filter(user=user, tenant=tenant, property__isnull=False).exists()
+    if not has_any_restrictions:
         return True
         
-    from apps.core.accounts.models import UserAssignment
-    # Check if user is linked to the property via UserAssignment or UserPropertyRole under the tenant
+    # 4. Check if user is linked to the property (or has tenant-wide assignment property_id=None)
     has_assignment = UserAssignment.objects.filter(
         user=user,
-        tenant=tenant,
-        property_id=property_id
+        tenant=tenant
+    ).filter(
+        Q(property_id=property_id) | Q(property_id__isnull=True)
     ).exists()
     if has_assignment:
         return True
 
     return UserPropertyRole.objects.filter(
         user=user,
-        property_id=property_id,
         tenant=tenant
+    ).filter(
+        Q(property_id=property_id) | Q(property_id__isnull=True)
     ).exists()
 
 def require_property_access(property_id_param='property_id'):
