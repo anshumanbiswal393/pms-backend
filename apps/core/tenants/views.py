@@ -40,9 +40,14 @@ class SuperadminPropertyViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAdminUser]
 
     def perform_create(self, serializer):
-        serializer.save(
-            created_by=self.request.user if self.request.user.is_authenticated else None
-        )
+        user = self.request.user if self.request.user.is_authenticated else None
+        tenant = serializer.save(created_by=user)
+        try:
+            from apps.core.subscriptions.services import ProductAccessService
+            ProductAccessService.provision_tenant_products(tenant, created_by=user)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to auto-provision tenant products: {e}")
 
     def perform_update(self, serializer):
         serializer.save(

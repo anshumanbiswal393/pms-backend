@@ -51,6 +51,14 @@ class ProductAccessService:
                 return entitlement.limit_value_numeric > 0 if entitlement.limit_value_numeric is not None else False
             return True
 
+        # Fallback: check if feature starts with PMS. / CRM. / HOUSEKEEPING.
+        if feature_code.startswith('PMS.'):
+            return ProductAccessService.has_product(tenant_id, 'PMS')
+        elif feature_code.startswith('CRM.'):
+            return ProductAccessService.has_product(tenant_id, 'CRM')
+        elif feature_code.startswith('HOUSEKEEPING.'):
+            return ProductAccessService.has_product(tenant_id, 'HOUSEKEEPING')
+
         # Fallback: check if the feature is registered under any active tenant product
         return ProductFeature.objects.filter(
             code=feature_code,
@@ -60,6 +68,109 @@ class ProductAccessService:
             product__tenant_products__tenant_subscription__status='ACTIVE',
             product__tenant_products__expires_at__gt=timezone.now()
         ).exists()
+
+    @staticmethod
+    def provision_tenant_products(tenant, created_by=None):
+        """
+        Automatically provisions default active products (PMS, CRM, HOUSEKEEPING), licenses, and entitlements for a tenant.
+        """
+        import uuid
+        from apps.core.subscriptions.models import SubscriptionPlan, TenantSubscription
+
+        # 1. Ensure Products exist
+        products_data = [
+            ("PMS", "Property Management System"),
+            ("CRM", "Customer Relationship Management"),
+            ("HOUSEKEEPING", "Housekeeping & Maintenance")
+        ]
+        product_objs = {}
+        for code, name in products_data:
+            p_obj, _ = Product.objects.get_or_create(code=code, defaults={"name": name, "is_active": True})
+            product_objs[code] = p_obj
+
+        # 2. Ensure Subscription Plan & Tenant Subscription
+        plan, _ = SubscriptionPlan.objects.get_or_create(
+            name="Enterprise Annual",
+            defaults={"billing_cycle": "YEARLY", "price": Decimal("2499.00"), "currency": "USD", "is_active": True}
+        )
+        tenant_sub, _ = TenantSubscription.objects.get_or_create(
+            tenant=tenant,
+            plan=plan,
+            defaults={
+                "start_date": timezone.now().date(),
+                "end_date": timezone.now().date() + timezone.timedelta(days=3650),
+                "status": "ACTIVE"
+            }
+        )
+        if tenant_sub.status != 'ACTIVE':
+            tenant_sub.status = 'ACTIVE'
+            tenant_sub.save()
+
+        # 3. Provision Tenant Products
+        tenant_product_objs = {}
+        for p_code in ["PMS", "CRM", "HOUSEKEEPING"]:
+            tp, _ = TenantProduct.objects.get_or_create(
+                tenant=tenant,
+                product=product_objs[p_code],
+                defaults={
+                    "tenant_subscription": tenant_sub,
+                    "activated_at": timezone.now(),
+                    "expires_at": timezone.now() + timezone.timedelta(days=3650),
+                    "status": "ACTIVE"
+                }
+            )
+            if tp.status != 'ACTIVE':
+                tp.status = 'ACTIVE'
+                tp.save()
+            tenant_product_objs[p_code] = tp
+
+        # 4. Provision Licenses
+        for p_code, tp in tenant_product_objs.items():
+            if not TenantProductLicense.objects.filter(tenant_product=tp, status="ACTIVE").exists():
+                license_key = f"LIC-{p_code}-{uuid.uuid4().hex[:12].upper()}"
+                TenantProductLicense.objects.create(
+                    tenant_product=tp,
+                    license_key=license_key,
+                    start_date=timezone.now().date(),
+                    end_date=timezone.now().date() + timezone.timedelta(days=3650),
+                    issued_by=created_by,
+                    status="ACTIVE"
+                )
+
+        # 5. Provision Entitlements
+        entitlements_to_seed = [
+            ("PMS", "PMS.RESERVATIONS", "BOOLEAN", True),
+            ("PMS", "PMS.RATES", "BOOLEAN", True),
+            ("PMS", "PMS.INVENTORY", "BOOLEAN", True),
+            ("PMS", "MAX_ROOMS", "NUMERIC", 500),
+            ("PMS", "MAX_USERS", "NUMERIC", 50),
+            ("PMS", "ADVANCED_REPORTS", "BOOLEAN", True),
+            ("PMS", "MULTI_PROPERTY", "BOOLEAN", True),
+            ("CRM", "CRM.GUESTS", "BOOLEAN", True),
+            ("CRM", "MAX_LEADS", "NUMERIC", 5000),
+            ("CRM", "API_ACCESS", "BOOLEAN", True),
+            ("HOUSEKEEPING", "HOUSEKEEPING.MAINTENANCE", "BOOLEAN", True),
+            ("HOUSEKEEPING", "MAX_ASSETS", "NUMERIC", 1000)
+        ]
+
+        for p_code, f_code, limit_type, limit_val in entitlements_to_seed:
+            tp = tenant_product_objs.get(p_code)
+            if not tp:
+                continue
+            
+            defaults = {"limit_type": limit_type}
+            if limit_type == "BOOLEAN":
+                defaults["limit_value_boolean"] = limit_val
+            elif limit_type == "NUMERIC":
+                defaults["limit_value_numeric"] = limit_val
+            elif limit_type == "JSON":
+                defaults["limit_value_json"] = limit_val
+
+            TenantProductEntitlement.objects.update_or_create(
+                tenant_product=tp,
+                feature_code=f_code,
+                defaults=defaults
+            )
 
 
 class LicenseValidationService:
@@ -135,14 +246,14 @@ class EntitlementValidationService:
     @staticmethod
     def has_entitlement(tenant, feature_code):
         """
-        Check if entitlement is active and boolean limit is True.
+        Check if entitlement is active and boolean limit is True. Fallback to product check if limit is None.
         """
         limit = EntitlementValidationService.get_limit(tenant, feature_code)
-        if limit is None:
-            return False
-        if isinstance(limit, bool):
-            return limit
-        return True
+        if limit is not None:
+            if isinstance(limit, bool):
+                return limit
+            return True
+        return ProductAccessService.has_feature(tenant, feature_code)
 
     @staticmethod
     def validate_limit(tenant, feature_code, current_value):
@@ -161,7 +272,7 @@ class EntitlementValidationService:
         ).first()
 
         if not entitlement:
-            return False
+            return ProductAccessService.has_feature(tenant, feature_code)
 
         if entitlement.limit_type == 'BOOLEAN':
             return entitlement.limit_value_boolean
