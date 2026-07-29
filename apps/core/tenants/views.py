@@ -21,9 +21,14 @@ class TenantViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAdminUser]  # Only django admin/superusers can manage tenants directly
 
     def perform_create(self, serializer):
-        serializer.save(
+        tenant = serializer.save(
             created_by=self.request.user if self.request.user.is_authenticated else None
         )
+        try:
+            from django.core.management import call_command
+            call_command('seed_product_access')
+        except Exception:
+            pass
 
 
 class SuperadminPropertyViewSet(viewsets.ModelViewSet):
@@ -78,6 +83,35 @@ class PropertyViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
             return Property.objects.none()
+        
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return Property.objects.filter(tenant=tenant)
+
+        # Tenant Owner / Superuser bypass
+        is_owner = (
+            user.is_superuser or
+            user.is_staff or
+            (user.role and user.role.code in ['owner', 'tenant_owner', 'admin', 'super_admin'])
+        )
+        if is_owner:
+            return Property.objects.filter(tenant=tenant)
+
+        # Filter assigned properties for staff users
+        from apps.core.accounts.models import UserAssignment
+        from apps.core.rbac.models import UserPropertyRole
+
+        assigned_ids = set()
+        for ua in UserAssignment.objects.filter(user=user, tenant=tenant):
+            if ua.property_id:
+                assigned_ids.add(ua.property_id)
+        for upr in UserPropertyRole.objects.filter(user=user, tenant=tenant):
+            if upr.property_id:
+                assigned_ids.add(upr.property_id)
+
+        if assigned_ids:
+            return Property.objects.filter(tenant=tenant, id__in=assigned_ids)
+
         return Property.objects.filter(tenant=tenant)
 
     def perform_create(self, serializer):

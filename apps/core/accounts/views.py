@@ -305,8 +305,6 @@ class PasswordLoginView(APIView):
 
     def post(self, request):
         tenant = getattr(request, 'tenant', None)
-        if not tenant:
-            return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
         email_or_username = request.data.get('email_or_username')
         password = request.data.get('password')

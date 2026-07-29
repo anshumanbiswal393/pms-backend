@@ -38,6 +38,23 @@ class AppUserSerializer(serializers.ModelSerializer):
         return lic.license_key if lic else "N/A"
 
 
+    assigned_properties = serializers.SerializerMethodField()
+    assigned_property_ids = serializers.ListField(
+        child=serializers.UUIDField(), write_only=True, required=False
+    )
+
+    def get_assigned_properties(self, obj):
+        assignments = UserAssignment.objects.filter(user=obj).select_related('property')
+        res = []
+        for a in assignments:
+            if a.property:
+                res.append({
+                    'id': str(a.property.id),
+                    'name': a.property.name,
+                    'city': a.property.city
+                })
+        return res
+
     class Meta:
         model = AppUser
         fields = (
@@ -45,17 +62,54 @@ class AppUserSerializer(serializers.ModelSerializer):
             'avatar_url', 'preferred_language', 'preferred_timezone', 
             'is_active', 'is_staff', 'role', 'role_name', 'department', 
             'department_name', 'shift', 'shift_name', 'created_at', 'updated_at', 'password',
-            'subscription_plan', 'subscription_expiry', 'license_key'
+            'subscription_plan', 'subscription_expiry', 'license_key',
+            'assigned_properties', 'assigned_property_ids'
         )
         read_only_fields = ('id', 'created_at', 'updated_at', 'is_staff')
 
+    def create(self, validated_data):
+        assigned_prop_ids = validated_data.pop('assigned_property_ids', None)
+        password = validated_data.pop('password', None)
+        user = super().create(validated_data)
+        if password:
+            user.set_password(password)
+            user.save()
+
+        if assigned_prop_ids is not None and user.tenant:
+            from apps.core.tenants.models import Property
+            UserAssignment.objects.filter(user=user).delete()
+            for pid in assigned_prop_ids:
+                prop_obj = Property.objects.filter(id=pid, tenant=user.tenant).first()
+                if prop_obj:
+                    UserAssignment.objects.create(
+                        user=user,
+                        tenant=user.tenant,
+                        property=prop_obj,
+                        role=user.role
+                    )
+        return user
+
     def update(self, instance, validated_data):
+        assigned_prop_ids = validated_data.pop('assigned_property_ids', None)
         password = validated_data.pop('password', None)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         if password:
             instance.set_password(password)
         instance.save()
+
+        if assigned_prop_ids is not None and instance.tenant:
+            from apps.core.tenants.models import Property
+            UserAssignment.objects.filter(user=instance).delete()
+            for pid in assigned_prop_ids:
+                prop_obj = Property.objects.filter(id=pid, tenant=instance.tenant).first()
+                if prop_obj:
+                    UserAssignment.objects.create(
+                        user=instance,
+                        tenant=instance.tenant,
+                        property=prop_obj,
+                        role=instance.role
+                    )
         return instance
 
 class PlatformUserSerializer(serializers.ModelSerializer):

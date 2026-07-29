@@ -61,7 +61,7 @@ class LanguageViewSet(viewsets.ModelViewSet):
 
 class CurrencyViewSet(viewsets.ModelViewSet):
     serializer_class = CurrencySerializer
-    permission_classes = [IsSuperUserOrReadOnly]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         queryset = Currency.objects.all()

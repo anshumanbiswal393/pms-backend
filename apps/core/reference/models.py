@@ -44,6 +44,7 @@ class Currency(BaseModel):
     code = models.CharField(max_length=3, unique=True, db_index=True)
     name = models.CharField(max_length=120)
     symbol = models.CharField(max_length=10, null=True, blank=True)
+    country = models.ForeignKey(Country, on_delete=models.SET_NULL, null=True, blank=True, related_name='currencies')
     is_active = models.BooleanField(default=True)
 
     class Meta:

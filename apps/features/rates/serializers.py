@@ -298,6 +298,8 @@ class RebuildCalendarSerializer(serializers.Serializer):
 
 
 class ServiceSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source='category.name', read_only=True, default='')
+
     class Meta:
         model = Service
         fields = '__all__'

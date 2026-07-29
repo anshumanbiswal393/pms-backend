@@ -20,6 +20,8 @@ class LanguageSerializer(serializers.ModelSerializer):
 
 
 class CurrencySerializer(serializers.ModelSerializer):
+    country_name = serializers.CharField(source='country.name', read_only=True)
+
     class Meta:
         model = Currency
         fields = '__all__'

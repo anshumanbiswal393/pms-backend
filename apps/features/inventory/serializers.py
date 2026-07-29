@@ -68,6 +68,7 @@ class InventoryUnitTypeSerializer(serializers.ModelSerializer):
             inventory_unit_type=instance
         ).hard_delete()
 
+        import uuid
         seen_amenities = set()
         for item in amenities_data:
             val = item.get('code') or item.get('id') if isinstance(item, dict) else item
@@ -77,7 +78,18 @@ class InventoryUnitTypeSerializer(serializers.ModelSerializer):
             amenity_qs = Amenity.objects.filter(
                 models.Q(tenant=tenant) | models.Q(tenant__isnull=True)
             )
-            amenity = amenity_qs.filter(models.Q(code=val) | models.Q(id=val)).first()
+
+            is_valid_uuid = False
+            try:
+                uuid.UUID(str(val))
+                is_valid_uuid = True
+            except (ValueError, TypeError, AttributeError):
+                is_valid_uuid = False
+
+            if is_valid_uuid:
+                amenity = amenity_qs.filter(models.Q(code=val) | models.Q(id=val)).first()
+            else:
+                amenity = amenity_qs.filter(code=val).first()
 
             if amenity and amenity.id not in seen_amenities:
                 seen_amenities.add(amenity.id)

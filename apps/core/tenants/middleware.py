@@ -9,10 +9,11 @@ class TenantResolutionMiddleware(MiddlewareMixin):
         # on all api calls except admin panel login/schema, or exclude them dynamically.
         path = request.path_info
         
-        # Paths that bypass tenant resolution (e.g., swagger docs, admin panels)
+        # Paths that bypass tenant resolution (e.g., swagger docs, admin panels, authentication)
         bypass_paths = [
             '/admin/',
             '/api/schema/',
+            '/api/auth/',
             '/favicon.ico',
         ]
         
@@ -46,20 +47,17 @@ class TenantResolutionMiddleware(MiddlewareMixin):
         if not subdomain and settings.DEBUG:
             subdomain = 'grandpalace'
 
-        if not subdomain:
-            return JsonResponse(
-                {'error': 'Tenant subdomain resolution failed. Provide X-Tenant-Subdomain header, subdomain query parameter, or subdomain host.'},
-                status=400
-            )
-
         # 2. Query tenant
-        try:
-            tenant = Tenant.objects.get(subdomain=subdomain)
-        except Tenant.DoesNotExist:
-            # Fallback to the first tenant for dev/testing mode on server (e.g. Render deployments)
+        tenant = None
+        if subdomain:
+            tenant = Tenant.objects.filter(subdomain=subdomain).first()
+            
+        if not tenant:
             tenant = Tenant.objects.first()
-            if not tenant:
-                return JsonResponse({'error': f'Tenant with subdomain "{subdomain}" does not exist.'}, status=404)
+
+        if not tenant:
+            request.tenant = None
+            return None
 
         # 3. Check tenant status
         if tenant.status == 'suspended':

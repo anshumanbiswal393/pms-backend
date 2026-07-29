@@ -2,6 +2,7 @@ import re
 from django.http import JsonResponse
 from django.utils.deprecation import MiddlewareMixin
 from django.conf import settings
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from apps.core.subscriptions.services import ProductAccessService, LicenseValidationService, EntitlementValidationService
 from apps.core.subscriptions.models import TenantProduct, TenantProductLicense, TenantProductUsage
 from apps.core.rbac.decorators import check_property_access
@@ -14,10 +15,29 @@ class ProductAccessMiddleware(MiddlewareMixin):
         bypass_paths = [
             '/admin/',
             '/api/schema/',
+            '/api/superadmin/',
             '/favicon.ico',
         ]
         if any(path.startswith(bp) for bp in bypass_paths):
             return None
+
+        # Resolve user from request or JWT Bearer header
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated:
+            auth_header = request.headers.get('Authorization')
+            if auth_header and auth_header.startswith('Bearer '):
+                try:
+                    jwt_auth = JWTAuthentication()
+                    validated_token = jwt_auth.get_validated_token(auth_header.split(' ')[1])
+                    user = jwt_auth.get_user(validated_token)
+                    request.user = user
+                except Exception:
+                    pass
+
+        # Superuser / Platform Staff ALWAYS Bypass Subscription Limits
+        if user and user.is_authenticated:
+            if user.is_superuser or user.is_staff or getattr(user, 'role', None) == 'super_admin':
+                return None
 
         # Resolve tenant
         tenant = getattr(request, 'tenant', None)

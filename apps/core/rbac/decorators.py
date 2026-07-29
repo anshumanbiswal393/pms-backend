@@ -5,16 +5,25 @@ from apps.core.rbac.models import UserPropertyRole
 def check_property_access(user, tenant, property_id):
     """
     Checks if a user has access to a specific property.
-    Superusers bypass checking.
+    Superusers and Tenant Owners bypass checking.
     """
     if not user.is_authenticated:
         return False
         
-    # Superusers bypass property checks
-    if user.is_superuser:
+    # Superusers and Tenant Owners bypass property checks
+    if user.is_superuser or user.is_staff or (user.role and user.role.code in ['owner', 'tenant_owner', 'admin', 'super_admin']) or (user.role and 'owner' in user.role.name.lower()):
         return True
         
-    # Check if user is linked to the property under the tenant
+    from apps.core.accounts.models import UserAssignment
+    # Check if user is linked to the property via UserAssignment or UserPropertyRole under the tenant
+    has_assignment = UserAssignment.objects.filter(
+        user=user,
+        tenant=tenant,
+        property_id=property_id
+    ).exists()
+    if has_assignment:
+        return True
+
     return UserPropertyRole.objects.filter(
         user=user,
         property_id=property_id,

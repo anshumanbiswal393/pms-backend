@@ -1,11 +1,10 @@
 from rest_framework import permissions
-from apps.core.rbac.models import UserPropertyRole
+from apps.core.rbac.utils import check_user_permission
 
 class HasGuestPermission(permissions.BasePermission):
     """
     DRF permission class that validates if the authenticated user
-    has the required permission for the resolved property context.
-    Superusers bypass checking.
+    has the required permission for guest profiles and CRM data.
     """
     def __init__(self, required_permission=None):
         super().__init__()
@@ -16,70 +15,32 @@ class HasGuestPermission(permissions.BasePermission):
             return self.required_permission
         
         if view.action in ['list', 'retrieve', 'search', 'activities', 'active']:
-            return 'guests.view'
+            return ['guests.view', 'reservations.view']
         elif view.action == 'create':
-            return 'guests.create'
+            return ['guests.create', 'reservations.create']
         elif view.action in ['update', 'partial_update']:
-            return 'guests.edit'
+            return ['guests.edit', 'reservations.edit']
         elif view.action == 'destroy':
-            return 'guests.delete'
+            return ['guests.delete', 'reservations.delete']
         
-        return 'guests.view'
+        return ['guests.view', 'reservations.view']
 
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        if request.user.is_superuser:
-            return True
-
-        perm_code = self.get_required_permission(request, view)
         tenant = getattr(request, 'tenant', None)
         if not tenant:
             return False
 
-        # Check for property ID in request context
+        perm_codes = self.get_required_permission(request, view)
+
         property_id = request.headers.get('X-Property-ID') or request.query_params.get('property_id')
         if not property_id:
             property_id = view.kwargs.get('property_id')
-        
-        # In CRM endpoints, if no property context is given, allow operations if authorized for ANY property under the tenant
-        if not property_id:
-            user_roles = UserPropertyRole.objects.filter(user=request.user, tenant=tenant)
-            for ur in user_roles:
-                if ur.role.permissions.filter(permission__code=perm_code).exists():
-                    return True
-                # Fallback checks for reservation permissions
-                if perm_code == 'guests.create' and ur.role.permissions.filter(permission__code='reservations.create').exists():
-                    return True
-                if perm_code == 'guests.view' and ur.role.permissions.filter(permission__code='reservations.view').exists():
-                    return True
-                if perm_code == 'guests.edit' and ur.role.permissions.filter(permission__code='reservations.edit').exists():
-                    return True
-            return False
 
-        # Specific property checks
-        user_property_role = UserPropertyRole.objects.filter(
-            user=request.user,
-            property_id=property_id,
-            tenant=tenant
-        ).first()
+        return check_user_permission(request.user, tenant, perm_codes, property_id=property_id)
 
-        if not user_property_role:
-            return False
-
-        if user_property_role.role.permissions.filter(permission__code=perm_code).exists():
-            return True
-            
-        # Fallback checks for reservation permissions
-        if perm_code == 'guests.create' and user_property_role.role.permissions.filter(permission__code='reservations.create').exists():
-            return True
-        if perm_code == 'guests.view' and user_property_role.role.permissions.filter(permission__code='reservations.view').exists():
-            return True
-        if perm_code == 'guests.edit' and user_property_role.role.permissions.filter(permission__code='reservations.edit').exists():
-            return True
-
-        return False
 
 
 class IsMergeManager(HasGuestPermission):
