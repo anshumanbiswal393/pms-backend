@@ -82,48 +82,20 @@ class TenantSerializer(serializers.ModelSerializer):
             status='PROVISIONED'
         )
 
-        # 6. Seed Default Roles for the Tenant
-        roles_data = [
-            ('super_admin', 'Super Admin', 'Full master developer control'),
-            ('owner', 'Owner', 'Full property group management'),
-            ('general_manager', 'General Manager', 'Full property local operations management'),
-            ('front_office_manager', 'Front Office Manager', 'Front desk oversight and checklists'),
-            ('front_desk_agent', 'Front Desk Agent', 'Front office checkin/checkout transactions'),
-            ('housekeeping_supervisor', 'Housekeeping Supervisor', 'Room status coordination'),
-            ('accounts', 'Accounts', 'Invoices and balance settlement processing'),
-            ('revenue_manager', 'Revenue Manager', 'Yield optimization configurations'),
-        ]
-        
+        # 6. Dynamically Provision Tenant Roles & Clone Permissions from Global System Roles in DB
         roles = {}
-        for r_code, r_name, r_desc in roles_data:
-            role, _ = Role.objects.get_or_create(
+        global_roles = Role.objects.filter(tenant__isnull=True)
+        for g_role in global_roles:
+            t_role, _ = Role.objects.get_or_create(
                 tenant=tenant,
-                code=r_code,
-                defaults={'name': r_name, 'description': r_desc}
+                code=g_role.code,
+                defaults={'name': g_role.name, 'description': g_role.description}
             )
-            roles[r_code] = role
+            roles[g_role.code] = t_role
 
-        # Link Permissions to Roles
-        all_perms = list(Permission.objects.all())
-        role_permission_mappings = {
-            'owner': [p.code for p in all_perms],
-            'general_manager': [p.code for p in all_perms if not p.code.startswith('settings:manage')],
-            'front_office_manager': [p.code for p in all_perms if p.code.startswith(('reservations:', 'inventory:view', 'billing:', 'crm:', 'reports:view'))],
-            'front_desk_agent': ['reservations:view', 'reservations:create', 'reservations:update', 'reservations:checkin', 'reservations:checkout', 'inventory:view', 'billing:view', 'billing:post', 'billing:settle', 'crm:view', 'crm:manage'],
-            'housekeeping_supervisor': ['inventory:view', 'inventory:status', 'housekeeping:view', 'housekeeping:assign', 'housekeeping:status', 'maintenance:view', 'maintenance:manage'],
-            'accounts': ['billing:view', 'billing:post', 'billing:settle', 'billing:refund', 'rates:view', 'services:view', 'reports:view', 'reports:export'],
-            'revenue_manager': ['rates:view', 'rates:manage', 'rates:packages', 'reservations:view', 'reports:view'],
-        }
-
-        for r_code, perm_codes in role_permission_mappings.items():
-            role = roles.get(r_code)
-            if role:
-                for p_code in perm_codes:
-                    try:
-                        perm = Permission.objects.get(code=p_code)
-                        RolePermission.objects.get_or_create(role=role, permission=perm)
-                    except Permission.DoesNotExist:
-                        pass
+            # Copy RolePermissions dynamically from DB global role to tenant role
+            for gp in RolePermission.objects.filter(role=g_role):
+                RolePermission.objects.get_or_create(role=t_role, permission=gp.permission)
 
         # 7. Create Admin User with Owner Role assigned
         owner_role = roles.get('owner')
