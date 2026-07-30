@@ -35,13 +35,46 @@ class InventoryUnitCategoryViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [permissions.IsAuthenticated()]
+        user = getattr(self.request, 'user', None)
+        if user and (getattr(user, 'is_superuser', False) or getattr(user, 'role', '') in ['super_admin', 'superadmin']):
+            return [permissions.IsAuthenticated()]
         return [HasInventoryPermission()]
 
     def get_queryset(self):
         tenant = getattr(self.request, 'tenant', None)
+        user = getattr(self.request, 'user', None)
+        is_super = user and (getattr(user, 'is_superuser', False) or getattr(user, 'role', '') in ['super_admin', 'superadmin'])
+        if is_super and not tenant:
+            return InventoryUnitCategory.objects.all()
         if not tenant:
             return InventoryUnitCategory.objects.filter(tenant__isnull=True)
         return InventoryUnitCategory.objects.filter(Q(tenant__isnull=True) | Q(tenant=tenant))
+
+    def perform_create(self, serializer):
+        tenant = getattr(self.request, 'tenant', None)
+        user = getattr(self.request, 'user', None)
+        is_super = user and (getattr(user, 'is_superuser', False) or getattr(user, 'role', '') in ['super_admin', 'superadmin'])
+        if is_super and not tenant:
+            serializer.save(tenant=None, is_system=True)
+        else:
+            serializer.save(tenant=tenant, is_system=False)
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        user = getattr(self.request, 'user', None)
+        is_super = user and (getattr(user, 'is_superuser', False) or getattr(user, 'role', '') in ['super_admin', 'superadmin'])
+        if instance.is_system and not is_super:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("System categories can only be modified by SuperAdmin.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        user = getattr(self.request, 'user', None)
+        is_super = user and (getattr(user, 'is_superuser', False) or getattr(user, 'role', '') in ['super_admin', 'superadmin'])
+        if instance.is_system and not is_super:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("System categories can only be deleted by SuperAdmin.")
+        instance.delete()
 
 
 class InventoryUnitTypeViewSet(RedisCacheMixin, viewsets.ModelViewSet):
