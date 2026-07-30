@@ -29,9 +29,27 @@ def check_user_permission(user, tenant, perm_codes, property_id=None):
     if isinstance(perm_codes, str):
         perm_codes = [perm_codes]
 
-    # Include wildcard permission
+    # Include wildcard and dot/colon notation translations
     extended_codes = set(perm_codes)
     extended_codes.add("*:*")
+    for pc in perm_codes:
+        if "." in pc:
+            extended_codes.add(pc.replace(".", ":"))
+            if pc.endswith('.edit'):
+                extended_codes.add(pc.replace('.edit', ':manage'))
+                extended_codes.add(pc.replace('.edit', ':update'))
+            elif pc.endswith('.create'):
+                extended_codes.add(pc.replace('.create', ':manage'))
+            elif pc.endswith('.delete'):
+                extended_codes.add(pc.replace('.delete', ':manage'))
+        if ":" in pc:
+            extended_codes.add(pc.replace(":", "."))
+            if pc.endswith(':manage'):
+                extended_codes.add(pc.replace(':manage', '.edit'))
+                extended_codes.add(pc.replace(':manage', '.create'))
+                extended_codes.add(pc.replace(':manage', '.delete'))
+            elif pc.endswith(':update'):
+                extended_codes.add(pc.replace(':update', '.edit'))
 
     # 2. Direct role on user (Evaluates DB permissions assigned to user.role)
     if hasattr(user, 'role') and user.role and not isinstance(user.role, str):
