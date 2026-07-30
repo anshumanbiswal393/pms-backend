@@ -10,26 +10,14 @@ def check_property_access(user, tenant, property_id):
     if not user or not user.is_authenticated:
         return False
         
-    # 1. Superusers & Staff
+    # 1. Superusers & Staff (Master Platform Developer Control)
     if getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False):
         return True
 
-    # 2. Get role string regardless of whether user.role is a string or Role object
-    role_str = ""
     if hasattr(user, 'role') and user.role:
-        if isinstance(user.role, str):
-            role_str = user.role.lower()
-        elif hasattr(user.role, 'code') and user.role.code:
-            role_str = str(user.role.code).lower()
-        elif hasattr(user.role, 'name') and user.role.name:
-            role_str = str(user.role.name).lower()
-
-    if (
-        role_str in ['owner', 'tenant_owner', 'admin', 'super_admin', 'superadmin', 'manager'] or 
-        'owner' in role_str or 
-        'admin' in role_str
-    ):
-        return True
+        role_code = getattr(user.role, 'code', '') or (user.role if isinstance(user.role, str) else '')
+        if role_code in ['super_admin', 'superadmin']:
+            return True
 
     from django.db.models import Q
     from apps.core.accounts.models import UserAssignment

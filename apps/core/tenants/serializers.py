@@ -104,14 +104,15 @@ class TenantSerializer(serializers.ModelSerializer):
             roles[r_code] = role
 
         # Link Permissions to Roles
+        all_perms = list(Permission.objects.all())
         role_permission_mappings = {
-            'owner': ['reservation.create', 'reservation.view', 'reservation.edit', 'reservation.cancel', 'billing.view', 'billing.edit', 'billing.void', 'billing.refund', 'housekeeping.view', 'housekeeping.edit', 'rates.view', 'rates.edit', 'settings.view', 'settings.edit'],
-            'general_manager': ['reservation.create', 'reservation.view', 'reservation.edit', 'reservation.cancel', 'billing.view', 'billing.edit', 'housekeeping.view', 'housekeeping.edit', 'rates.view', 'rates.edit', 'settings.view'],
-            'front_office_manager': ['reservation.create', 'reservation.view', 'reservation.edit', 'reservation.cancel', 'billing.view', 'billing.edit', 'housekeeping.view', 'housekeeping.edit', 'rates.view'],
-            'front_desk_agent': ['reservation.create', 'reservation.view', 'reservation.edit', 'housekeeping.view'],
-            'housekeeping_supervisor': ['housekeeping.view', 'housekeeping.edit'],
-            'accounts': ['billing.view', 'billing.edit', 'billing.void', 'billing.refund'],
-            'revenue_manager': ['rates.view', 'rates.edit', 'reservation.view'],
+            'owner': [p.code for p in all_perms],
+            'general_manager': [p.code for p in all_perms if not p.code.startswith('settings:manage')],
+            'front_office_manager': [p.code for p in all_perms if p.code.startswith(('reservations:', 'inventory:view', 'billing:', 'crm:', 'reports:view'))],
+            'front_desk_agent': ['reservations:view', 'reservations:create', 'reservations:update', 'reservations:checkin', 'reservations:checkout', 'inventory:view', 'billing:view', 'billing:post', 'billing:settle', 'crm:view', 'crm:manage'],
+            'housekeeping_supervisor': ['inventory:view', 'inventory:status', 'housekeeping:view', 'housekeeping:assign', 'housekeeping:status', 'maintenance:view', 'maintenance:manage'],
+            'accounts': ['billing:view', 'billing:post', 'billing:settle', 'billing:refund', 'rates:view', 'services:view', 'reports:view', 'reports:export'],
+            'revenue_manager': ['rates:view', 'rates:manage', 'rates:packages', 'reservations:view', 'reports:view'],
         }
 
         for r_code, perm_codes in role_permission_mappings.items():
@@ -124,18 +125,19 @@ class TenantSerializer(serializers.ModelSerializer):
                     except Permission.DoesNotExist:
                         pass
 
-        # 7. Create Admin User
+        # 7. Create Admin User with Owner Role assigned
+        owner_role = roles.get('owner')
         admin_user = AppUser.objects.create_user(
             email=admin_email,
             password=admin_password,
             tenant=tenant,
             name=tenant.name,
             username=admin_email.split('@')[0],
+            role=owner_role,
             is_active=True
         )
 
         # 8. Assign Owner Role to the Admin User for this Tenant
-        owner_role = roles.get('owner')
         if owner_role:
             UserAssignment.objects.create(
                 user=admin_user,

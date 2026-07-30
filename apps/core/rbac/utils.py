@@ -8,71 +8,50 @@ def check_user_permission(user, tenant, perm_codes, property_id=None):
     Validates if `user` has any of `perm_codes` under `tenant` (and optional `property_id`).
     
     Order of Evaluation:
-    1. Superuser / Platform Staff / Tenant Owner / Tenant Admin -> ALWAYS Granted (True).
-    2. User's direct assigned role (user.role).
-    3. UserAssignment records.
-    4. UserPropertyRole records.
+    1. Superuser / Master Platform Staff (`is_superuser`, `is_staff`, or `role.code == 'super_admin'`) -> True.
+    2. User's direct assigned role (`user.role`). Evaluated via database RolePermission records.
+    3. `UserAssignment` records. Evaluated via database RolePermission records.
+    4. `UserPropertyRole` records. Evaluated via database RolePermission records.
     """
     if not user or not user.is_authenticated:
         return False
 
-    # 1. Superuser / Platform Staff
-    if user.is_superuser or user.is_staff:
+    # 1. Superuser / Master Platform Staff
+    if getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False):
         return True
 
-    # Get role string regardless of string vs object
-    role_str = ""
+    # Master Platform SuperAdmin Role Bypass
     if hasattr(user, 'role') and user.role:
-        if isinstance(user.role, str):
-            role_str = user.role.lower()
-        elif hasattr(user.role, 'code') and user.role.code:
-            role_str = str(user.role.code).lower()
-        elif hasattr(user.role, 'name') and user.role.name:
-            role_str = str(user.role.name).lower()
-
-    # 2. Tenant Owner / Admin Check -> ALWAYS Granted
-    if role_str in ['owner', 'tenant_owner', 'admin', 'super_admin', 'superadmin', 'manager'] or 'owner' in role_str or 'admin' in role_str:
-        return True
+        role_code = getattr(user.role, 'code', '') or (user.role if isinstance(user.role, str) else '')
+        if role_code in ['super_admin', 'superadmin']:
+            return True
 
     if isinstance(perm_codes, str):
         perm_codes = [perm_codes]
 
-    # Include wildcard and fallback permissions
+    # Include wildcard permission
     extended_codes = set(perm_codes)
     extended_codes.add("*:*")
-    for pc in perm_codes:
-        if pc.endswith('.view'):
-            extended_codes.add('settings.view')
-        elif pc.endswith('.create') or pc.endswith('.edit') or pc.endswith('.delete') or pc.endswith('.manage'):
-            extended_codes.add('settings.edit')
 
-    # 3. Direct role on user
-    if user.role:
-        if user.role.code in ['owner', 'tenant_owner', 'admin', 'super_admin'] or 'owner' in user.role.name.lower():
-            return True
+    # 2. Direct role on user (Evaluates DB permissions assigned to user.role)
+    if hasattr(user, 'role') and user.role and not isinstance(user.role, str):
         if user.role.permissions.filter(permission__code__in=extended_codes).exists():
             return True
 
-    # 4. UserAssignment check
+    # 3. UserAssignment check (Evaluates DB permissions assigned to ua.role)
     uas = UserAssignment.objects.filter(user=user, tenant=tenant)
     if property_id:
         uas = uas.filter(Q(property_id=property_id) | Q(property_id__isnull=True))
     for ua in uas:
-        if ua.role:
-            if ua.role.code in ['owner', 'tenant_owner', 'admin', 'super_admin'] or 'owner' in ua.role.name.lower():
-                return True
-            if ua.role.permissions.filter(permission__code__in=extended_codes).exists():
-                return True
+        if ua.role and ua.role.permissions.filter(permission__code__in=extended_codes).exists():
+            return True
 
-    # 5. UserPropertyRole check
+    # 4. UserPropertyRole check (Evaluates DB permissions assigned to upr.role)
     uprs = UserPropertyRole.objects.filter(user=user, tenant=tenant)
     if property_id:
         uprs = uprs.filter(Q(property_id=property_id) | Q(property_id__isnull=True))
     for upr in uprs:
-        if upr.role:
-            if upr.role.code in ['owner', 'tenant_owner', 'admin', 'super_admin'] or 'owner' in upr.role.name.lower():
-                return True
-            if upr.role.permissions.filter(permission__code__in=extended_codes).exists():
-                return True
+        if upr.role and upr.role.permissions.filter(permission__code__in=extended_codes).exists():
+            return True
 
     return False
