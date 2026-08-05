@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from apps.core.subscriptions.models import (
     Product, SubscriptionPlan, SubscriptionPlanProduct, SubscriptionEntitlement, TenantSubscription,
-    ProductFeature, TenantProduct, TenantProductLicense, TenantProductEntitlement, TenantProductUsage
+    TenantSubscriptionFeature, ProductFeature, TenantProduct, TenantProductLicense, TenantProductEntitlement, TenantProductUsage
 )
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -86,14 +86,27 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
         return instance
 
 
+class TenantSubscriptionFeatureSerializer(serializers.ModelSerializer):
+    feature_name = serializers.CharField(source='product_feature.name', read_only=True)
+    product_name = serializers.CharField(source='product_feature.product.name', read_only=True)
+
+    class Meta:
+        model = TenantSubscriptionFeature
+        fields = '__all__'
+
+
 class TenantSubscriptionSerializer(serializers.ModelSerializer):
     plan_name = serializers.CharField(source='plan.name', read_only=True)
+    features = TenantSubscriptionFeatureSerializer(many=True, read_only=True)
     start_date = serializers.DateField(required=False)
     end_date = serializers.DateField(required=False)
 
     class Meta:
         model = TenantSubscription
-        fields = ['id', 'tenant', 'plan', 'plan_name', 'start_date', 'end_date', 'status']
+        fields = [
+            'id', 'tenant', 'plan', 'plan_name', 'is_custom', 'custom_name',
+            'billing_cycle', 'price', 'currency', 'start_date', 'end_date', 'status', 'features'
+        ]
         read_only_fields = ['tenant']
 
 
@@ -102,6 +115,8 @@ class SubscriptionActionSerializer(serializers.Serializer):
 
 
 class ProductFeatureSerializer(serializers.ModelSerializer):
+    product_code = serializers.CharField(source='product.code', read_only=True)
+
     class Meta:
         model = ProductFeature
         fields = '__all__'
@@ -137,11 +152,15 @@ class TenantProductUsageSerializer(serializers.ModelSerializer):
 class SuperadminTenantSubscriptionSerializer(serializers.ModelSerializer):
     plan_name = serializers.CharField(source='plan.name', read_only=True)
     tenant_name = serializers.CharField(source='tenant.name', read_only=True)
+    features = TenantSubscriptionFeatureSerializer(many=True, read_only=True)
     start_date = serializers.DateField(required=False)
     end_date = serializers.DateField(required=False)
 
     class Meta:
         model = TenantSubscription
-        fields = ['id', 'tenant', 'tenant_name', 'plan', 'plan_name', 'start_date', 'end_date', 'status']
+        fields = [
+            'id', 'tenant', 'tenant_name', 'plan', 'plan_name', 'is_custom', 'custom_name',
+            'billing_cycle', 'price', 'currency', 'start_date', 'end_date', 'status', 'features'
+        ]
 
 

@@ -348,7 +348,7 @@ class AuthService:
         # Fetch subscription plan details
         from apps.core.subscriptions.models import TenantSubscription, TenantProductLicense
         sub = TenantSubscription.objects.filter(tenant=tenant, status='ACTIVE').first()
-        sub_plan = sub.plan.name if sub else "Standard Enterprise Plan"
+        sub_plan = (sub.plan.name if sub.plan else (sub.custom_name or "Custom Subscription")) if sub else "Standard Enterprise Plan"
         sub_expiry = str(sub.end_date) if sub else "2027-01-31"
         
         # Fetch license key

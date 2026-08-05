@@ -1,7 +1,7 @@
 from django.http import JsonResponse
 from django.utils import timezone
 from django.utils.deprecation import MiddlewareMixin
-from apps.core.accounts.models import AccountLock, IPWhitelist
+from apps.core.accounts.models import AccountLock, IPWhitelist, SuperadminIPWhitelist
 
 class AccountLockoutMiddleware(MiddlewareMixin):
     def process_request(self, request):
@@ -41,13 +41,27 @@ class IPWhitelistMiddleware(MiddlewareMixin):
         return ip
 
     def process_request(self, request):
-        tenant = getattr(request, 'tenant', None)
-        if not tenant:
-            return None
-
-        # Check if the path should bypass whitelisting
         path = request.path_info
         if path.startswith('/admin/') or path.startswith('/api/schema/'):
+            return None
+
+        client_ip = self.get_client_ip(request)
+
+        # Check Superadmin IP Whitelisting for superadmin routes
+        is_superadmin_route = 'superadmin' in path
+        if is_superadmin_route:
+            active_superadmin_whitelists = SuperadminIPWhitelist.objects.filter(is_active=True)
+            if active_superadmin_whitelists.exists():
+                allowed_ips = [w.ip_address for w in active_superadmin_whitelists]
+                # Allow local loopback addresses (127.0.0.1, ::1) and 0.0.0.0 automatically
+                local_ips = ['127.0.0.1', '::1', 'localhost', '0.0.0.0']
+                if client_ip not in allowed_ips and not any(lip in allowed_ips for lip in local_ips) and client_ip not in local_ips:
+                    return JsonResponse({
+                        'error': f'Access denied: IP {client_ip} is not whitelisted for Platform Superadmin operations.'
+                    }, status=403)
+
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
             return None
 
         # Check if IP whitelist enforcement is enabled for the tenant
@@ -60,14 +74,13 @@ class IPWhitelistMiddleware(MiddlewareMixin):
         if not whitelist.exists():
             return None
 
-        client_ip = self.get_client_ip(request)
         allowed_ips = [w.ip_address for w in whitelist]
 
         # Simple string inclusion or exact match
         if client_ip not in allowed_ips and '0.0.0.0' not in allowed_ips:
-            # Check if there is an IP pattern or match
             return JsonResponse({
                 'error': f'Access denied: IP {client_ip} is not whitelisted for tenant {tenant.name}.'
             }, status=403)
 
         return None
+

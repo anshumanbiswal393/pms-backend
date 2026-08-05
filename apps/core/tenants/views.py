@@ -352,12 +352,142 @@ class RequestSubscriptionView(APIView):
         new_status = request.data.get('status')
         if not request_id or not new_status:
             return Response({'error': 'ID and status are required.'}, status=400)
-        from apps.core.subscriptions.models import SubscriptionRequest
+        from apps.core.subscriptions.models import (
+            SubscriptionRequest, Product, TenantSubscription, TenantProduct,
+            TenantProductLicense, TenantProductEntitlement, ProductFeature,
+            TenantSubscriptionFeature
+        )
+        from apps.core.accounts.models import AppUser
+        from django.utils import timezone
+        import uuid
+
         try:
             req_obj = SubscriptionRequest.objects.get(id=request_id)
             req_obj.status = new_status
             req_obj.save()
-            return Response({'message': f'Subscription request {new_status.lower()} successfully.'}, status=200)
+
+            # If request is APPROVED, assign/provision the requested product & features to the tenant
+            if new_status == 'APPROVED':
+                tenant = req_obj.tenant
+                product_name = req_obj.product_name
+
+                # 1. Match product by name or code
+                product = Product.objects.filter(name__iexact=product_name).first() or \
+                          Product.objects.filter(code__iexact=product_name).first()
+
+                if not product:
+                    product = Product.objects.filter(name__icontains=product_name).first() or \
+                              Product.objects.filter(code__icontains=product_name).first()
+
+                if product:
+                    # 2. Get or create tenant's active subscription
+                    active_sub = TenantSubscription.objects.filter(tenant=tenant, status='ACTIVE').first()
+                    if not active_sub:
+                        start_d = timezone.now().date()
+                        end_d = start_d + timezone.timedelta(days=365)
+                        active_sub = TenantSubscription.objects.create(
+                            tenant=tenant,
+                            plan=None,
+                            is_custom=True,
+                            custom_name=f"Standard Custom Plan ({tenant.name})",
+                            billing_cycle='MONTHLY',
+                            price=0.00,
+                            currency='USD',
+                            start_date=start_d,
+                            end_date=end_d,
+                            status='ACTIVE'
+                        )
+
+                    # 3. Provision TenantProduct
+                    start_date = active_sub.start_date or timezone.now().date()
+                    end_date = active_sub.end_date or (start_date + timezone.timedelta(days=365))
+
+                    tp, _ = TenantProduct.objects.update_or_create(
+                        tenant=tenant,
+                        product=product,
+                        defaults={
+                            'tenant_subscription': active_sub,
+                            'activated_at': timezone.now(),
+                            'expires_at': timezone.datetime.combine(end_date, timezone.datetime.min.time()),
+                            'status': 'ACTIVE'
+                        }
+                    )
+
+                    # 4. Provision TenantProductLicense
+                    superuser = AppUser.objects.filter(is_superuser=True).first()
+                    lic = TenantProductLicense.objects.filter(tenant_product=tp).first()
+                    if not lic:
+                        TenantProductLicense.objects.create(
+                            tenant_product=tp,
+                            status='ACTIVE',
+                            license_key=f"LIC-{product.code.upper()}-{uuid.uuid4().hex[:12].upper()}",
+                            start_date=start_date,
+                            end_date=end_date,
+                            issued_by=superuser
+                        )
+                    else:
+                        lic.status = 'ACTIVE'
+                        lic.save()
+
+                    # 5. Provision Features & Entitlements for this product
+                    product_features = ProductFeature.objects.filter(product=product)
+
+                    # If subscription is custom, register custom features on subscription
+                    if active_sub.is_custom:
+                        for pf in product_features:
+                            TenantSubscriptionFeature.objects.get_or_create(
+                                tenant_subscription=active_sub,
+                                product_feature=pf,
+                                defaults={
+                                    'feature_code': pf.code,
+                                    'price': pf.price or 0.00,
+                                    'is_active': True
+                                }
+                            )
+
+                    # Provision TenantProductEntitlement records
+                    for pf in product_features:
+                        TenantProductEntitlement.objects.update_or_create(
+                            tenant_product=tp,
+                            feature_code=pf.code,
+                            defaults={
+                                'product_feature': pf,
+                                'limit_type': 'BOOLEAN',
+                                'limit_value_boolean': True
+                            }
+                        )
+
+                # Send approval email to requested user/contact
+                if req_obj.contact_email:
+                    from django.core.mail import send_mail
+                    from django.conf import settings
+
+                    email_html = f"""
+                    <!DOCTYPE html>
+                    <html>
+                    <body style="font-family: Arial, sans-serif; padding: 20px; background: #f8fafc;">
+                      <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 24px; max-width: 550px; margin: 0 auto;">
+                        <h3 style="color: #166534; margin-top: 0;">Subscription Request Approved!</h3>
+                        <p>Hello <strong>{req_obj.contact_name}</strong>,</p>
+                        <p>Your subscription request for <strong>{req_obj.product_name}</strong> for <strong>{tenant.name}</strong> has been approved and activated by the platform administrator.</p>
+                        <p>The module is now enabled and accessible in your Retrod One dashboard.</p>
+                        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+                        <p style="font-size: 11px; color: #64748b;">Retrod One Hospitality Platform</p>
+                      </div>
+                    </body>
+                    </html>
+                    """
+
+                    send_mail(
+                        subject=f"Subscription Request Approved: {req_obj.product_name}",
+                        message=f"Your subscription request for {req_obj.product_name} has been approved and activated.",
+                        from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'no-reply@retrod.io'),
+                        recipient_list=[req_obj.contact_email],
+                        html_message=email_html,
+                        fail_silently=True
+                    )
+
+            return Response({'message': f'Subscription request {new_status.lower()} and product assigned successfully.'}, status=200)
         except SubscriptionRequest.DoesNotExist:
             return Response({'error': 'Request not found.'}, status=404)
 

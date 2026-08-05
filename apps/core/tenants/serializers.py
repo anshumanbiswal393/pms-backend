@@ -123,7 +123,7 @@ class PropertySerializer(serializers.ModelSerializer):
     class Meta:
         model = Property
         fields = '__all__'
-        read_only_fields = ('tenant', 'created_at', 'updated_at', 'deleted_at', 'created_by', 'updated_by')
+        read_only_fields = ('tenant', 'hotel_id', 'created_at', 'updated_at', 'deleted_at', 'created_by', 'updated_by')
 
 
 class SuperadminPropertySerializer(serializers.ModelSerializer):
@@ -132,7 +132,7 @@ class SuperadminPropertySerializer(serializers.ModelSerializer):
     class Meta:
         model = Property
         fields = [
-            'id', 'tenant', 'tenant_name', 'name', 'property_type',
+            'id', 'hotel_id', 'tenant', 'tenant_name', 'name', 'property_type',
             'address_line_1', 'address_line_2', 'city', 'state', 'country', 'postal_code',
             'contact_email', 'contact_phone', 'currency', 'timezone', 'image_url', 'is_active',
             'description', 'star_rating', 'website', 'check_in_time', 'check_out_time',

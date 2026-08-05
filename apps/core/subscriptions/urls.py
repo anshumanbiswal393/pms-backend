@@ -22,6 +22,7 @@ router.register(r'tenant-usages', UsageViewSet, basename='tenant-usage')
 urlpatterns = [
     path('', include(router.urls)),
     path('assign/', SubscriptionAssignView.as_view(), name='subscription-assign'),
+    path('custom-assign/', TenantSubscriptionViewSet.as_view({'post': 'custom_assign'}), name='subscription-custom-assign'),
     path('upgrade/', SubscriptionUpgradeView.as_view(), name='subscription-upgrade'),
     path('downgrade/', SubscriptionDowngradeView.as_view(), name='subscription-downgrade'),
     path('usage/', SubscriptionUsageView.as_view(), name='subscription-usage'),

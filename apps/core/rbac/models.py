@@ -7,6 +7,7 @@ class Permission(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     code = models.CharField(max_length=64, unique=True)
     category = models.CharField(max_length=64)
+    description = models.TextField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.category}:{self.code}"

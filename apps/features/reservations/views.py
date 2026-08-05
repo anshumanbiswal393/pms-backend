@@ -1,8 +1,9 @@
-from rest_framework import viewsets, status, permissions
+from rest_framework import viewsets, status, permissions, serializers
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from django.forms.models import model_to_dict
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from apps.features.reservations.models import (
     CorporateAccount, GroupBlock, Reservation, ReservationInventory,
@@ -137,7 +138,6 @@ class ReservationViewSet(viewsets.ModelViewSet):
         property_id = request.headers.get('X-Property-ID') or request.query_params.get('property_id')
         if not property_id:
             return Response({'error': 'X-Property-ID header or property_id parameter is required.'}, status=status.HTTP_400_BAD_REQUEST)
-
         try:
             property_obj = Property.objects.get(id=property_id, tenant=tenant)
         except Property.DoesNotExist:
@@ -146,12 +146,18 @@ class ReservationViewSet(viewsets.ModelViewSet):
         serializer = CreateBookingSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        reservation = BookingEngine.create_booking(
-            tenant=tenant,
-            property_obj=property_obj,
-            booking_data=serializer.validated_data,
-            user=request.user
-        )
+        try:
+            reservation = BookingEngine.create_booking(
+                tenant=tenant,
+                property_obj=property_obj,
+                booking_data=serializer.validated_data,
+                user=request.user
+            )
+        except (serializers.ValidationError, DjangoValidationError) as e:
+            detail = e.messages if hasattr(e, 'messages') else (e.detail if hasattr(e, 'detail') else str(e))
+            if isinstance(detail, list) and len(detail) == 1:
+                detail = detail[0]
+            return Response({'error': detail, 'detail': detail}, status=status.HTTP_400_BAD_REQUEST)
         output = self.get_serializer(reservation)
         return Response(output.data, status=status.HTTP_201_CREATED)
 

@@ -11,7 +11,7 @@ from apps.features.reservations.models import (
 )
 from apps.features.crm.models import GuestProfile, GuestContact, GuestDocument
 from apps.features.inventory.models import InventoryUnit, InventoryUnitType
-from apps.features.rates.models import RatePlan, RatePlanVersion, Service, HospitalityPackage, Coupon
+from apps.features.rates.models import RatePlan, RatePlanVersion, Service, HospitalityPackage, Coupon, MealPlan, TenantMealPlanPrice
 
 from apps.core.common.redis_lock import redis_distributed_lock
 
@@ -52,6 +52,45 @@ def make_serializable(data):
     elif hasattr(data, 'isoformat'):
         return data.isoformat()
     return data
+
+def calculate_item_tax(tenant, item_price, per_night_tariff=None, guests_count=1):
+    """
+    Calculates tax by dynamically inspecting DB SystemTax rules (min_tariff, max_tariff, calculation_base, flat_amount)
+    without any hardcoded rates or thresholds. Returns tuple of (applicable_tax, tax_label).
+    """
+    from apps.core.common.models import SystemTax
+    from django.db.models import Q
+    
+    active_rates = SystemTax.objects.filter(
+        Q(tenant=tenant) | Q(tenant__isnull=True),
+        status='active'
+    )
+    tariff = per_night_tariff if per_night_tariff is not None else item_price
+    
+    applicable_tax = Decimal('0.00')
+    tax_names = []
+
+    for rate_obj in active_rates:
+        # Tariff slab filtering dynamically read from DB columns min_tariff & max_tariff
+        if rate_obj.min_tariff is not None and tariff < rate_obj.min_tariff:
+            continue
+        if rate_obj.max_tariff is not None and rate_obj.max_tariff > Decimal('0.00') and tariff > rate_obj.max_tariff:
+            continue
+
+        base = rate_obj.calculation_base or 'folio_subtotal'
+        if base in ['per_night', 'flat']:
+            applicable_tax += Decimal(str(rate_obj.flat_amount or '0.00'))
+        elif base == 'per_guest_night':
+            applicable_tax += Decimal(str(rate_obj.flat_amount or '0.00')) * Decimal(str(guests_count))
+        else: # 'room_tariff', 'folio_subtotal', percentage
+            rate_pct = Decimal(str(rate_obj.rate or '0.00'))
+            applicable_tax += item_price * (rate_pct / Decimal('100.0'))
+
+        if rate_obj.name:
+            tax_names.append(rate_obj.name)
+
+    label_str = ", ".join(tax_names) if tax_names else "GST Tax"
+    return applicable_tax, label_str
 
 class BookingEngine:
     @staticmethod
@@ -102,10 +141,10 @@ class BookingEngine:
         if booking_data.get('primary_guest_id'):
             primary_guest = GuestProfile.objects.get(id=booking_data['primary_guest_id'], tenant=tenant)
         else:
-            full_name = booking_data.get('fullName') or "Inline Guest"
-            email = booking_data.get('email') or ""
-            phone = booking_data.get('phone') or ""
-            address = booking_data.get('address') or ""
+            full_name = booking_data.get('fullName') or booking_data.get('event_organizer_name') or "Inline Guest"
+            email = booking_data.get('email') or booking_data.get('event_organizer_email') or ""
+            phone = booking_data.get('phone') or booking_data.get('event_organizer_contact') or ""
+            address = booking_data.get('address') or booking_data.get('event_organizer_billing_address') or ""
             nationality = booking_data.get('nationality') or ""
             id_type = booking_data.get('idType') or "PASSPORT"
             id_number = booking_data.get('idNumber') or ""
@@ -114,9 +153,23 @@ class BookingEngine:
             first_name = parts[0]
             last_name = parts[1] if len(parts) > 1 else "Guest"
 
-            contact = GuestContact.objects.filter(tenant=tenant, email=email, phone=phone).first()
+            contact = None
+            if email or phone:
+                contact = GuestContact.objects.filter(tenant=tenant, email=email, phone=phone).first()
+                if not contact and email:
+                    contact = GuestContact.objects.filter(tenant=tenant, email=email).first()
+                if not contact and phone:
+                    contact = GuestContact.objects.filter(tenant=tenant, phone=phone).first()
+
             if contact:
                 primary_guest = contact.guest
+                if email and contact.email != email:
+                    contact.email = email
+                if phone and contact.phone != phone:
+                    contact.phone = phone
+                if address:
+                    contact.address_line_1 = address
+                contact.save()
             else:
                 primary_guest = GuestProfile.objects.create(
                     tenant=tenant,
@@ -282,6 +335,31 @@ class BookingEngine:
 
             # Create daily rate snapshots
             rate_plan = RatePlan.objects.get(id=alloc_item['rate_plan_id'], tenant=tenant)
+            
+            # Resolve guest chosen meal plan or rate plan default meal plan
+            meal_plan = None
+            meal_plan_id = alloc_item.get('meal_plan_id')
+            if meal_plan_id:
+                try:
+                    meal_plan = MealPlan.objects.get(id=meal_plan_id)
+                except (MealPlan.DoesNotExist, Exception):
+                    pass
+            if not meal_plan:
+                meal_plan = rate_plan.default_meal_plan
+
+            meal_price = Decimal("0.00")
+            if meal_plan:
+                unit_type_id = alloc_item.get('inventory_unit_type_id')
+                mp_price_obj = None
+                if unit_type_id:
+                    mp_price_obj = TenantMealPlanPrice.objects.filter(
+                        tenant=tenant, inventory_unit_type_id=unit_type_id, meal_plan=meal_plan
+                    ).first()
+                if mp_price_obj:
+                    meal_price = mp_price_obj.price
+                else:
+                    meal_price = meal_plan.price_adjustment
+
             for rate_day in alloc_item.get('nightly_rates', []):
                 version_id = rate_day.get('rate_plan_version_id')
                 rate_version = None
@@ -308,7 +386,10 @@ class BookingEngine:
                     'rate_plan_code': rate_plan.code,
                     'rate_plan_name': rate_plan.name,
                     'version_number': rate_version.version_number,
-                    'amount': str(amount)
+                    'amount': str(amount),
+                    'meal_plan_code': meal_plan.code if meal_plan else None,
+                    'meal_plan_name': meal_plan.name if meal_plan else None,
+                    'meal_plan_price': str(meal_price) if meal_plan else "0.00",
                 }
                 policy_snapshot = {
                     'cancellation_policy_code': rate_plan.cancellation_policy.code if rate_plan.cancellation_policy else None,
@@ -327,7 +408,11 @@ class BookingEngine:
                 )
 
                 total_amount += amount
-                tax_amount += amount * Decimal('0.10')  # 10% tax assumption for billing simulation
+                
+                # Dynamic tax calculation checking DB TaxRates (min_tariff, max_tariff, calculation_base)
+                guest_cnt = allocation.adult_count + allocation.child_count
+                item_tax_amt, _ = calculate_item_tax(tenant=tenant, item_price=amount, per_night_tariff=amount, guests_count=guest_cnt)
+                tax_amount += item_tax_amt
 
         # Add packages
         packages = booking_data.get('packages', [])
@@ -341,7 +426,8 @@ class BookingEngine:
                     price=pkg.price
                 )
                 total_amount += pkg.price
-                tax_amount += pkg.price * Decimal('0.10')
+                pkg_tax_amt, _ = calculate_item_tax(tenant=tenant, item_price=pkg.price)
+                tax_amount += pkg_tax_amt
             except HospitalityPackage.DoesNotExist:
                 continue
 
@@ -357,16 +443,20 @@ class BookingEngine:
                     price=svc.price
                 )
                 total_amount += svc.price
-                tax_amount += svc.price * Decimal('0.10')
+                svc_tax_amt, _ = calculate_item_tax(tenant=tenant, item_price=svc.price)
+                tax_amount += svc_tax_amt
             except Service.DoesNotExist:
                 continue
 
         # Apply coupon
-        coupon_code = booking_data.get('coupon_code')
+        coupon_code = booking_data.get('coupon_code') or booking_data.get('couponCode')
         discount_amount = Decimal('0.00')
         if coupon_code:
-            try:
-                coupon = Coupon.objects.get(tenant=tenant, code=coupon_code.upper().strip(), is_active=True)
+            code_str = str(coupon_code).strip()
+            coupon = Coupon.objects.filter(tenant=tenant, code__iexact=code_str, is_active=True).first()
+            if not coupon:
+                coupon = Coupon.objects.filter(code__iexact=code_str, is_active=True).first()
+            if coupon:
                 if not coupon.max_uses or coupon.current_uses < coupon.max_uses:
                     if coupon.discount_type == 'FLAT':
                         discount_amount = coupon.discount_value
@@ -380,16 +470,27 @@ class BookingEngine:
                     )
                     coupon.current_uses += 1
                     coupon.save()
-            except Coupon.DoesNotExist:
-                pass
 
         reservation.total_amount = total_amount
         reservation.tax_amount = tax_amount
         reservation.discount_amount = discount_amount
-        # After discounts and tax
-        reservation.balance_amount = (total_amount + tax_amount) - discount_amount
+
+        paid_val = Decimal(str(booking_data.get('paid_amount') or booking_data.get('paidAmount') or '0.00'))
+        reservation.paid_amount = paid_val
+        net_payable = (total_amount + tax_amount) - discount_amount
+        reservation.balance_amount = max(Decimal('0.00'), net_payable - paid_val)
         reservation.status = 'CONFIRMED'
         reservation.save()
+
+        if paid_val > Decimal('0.00'):
+            payment_method_str = booking_data.get('payment_method') or booking_data.get('paymentMethod') or 'Cash'
+            ReservationEvent.objects.create(
+                tenant=tenant,
+                reservation=reservation,
+                event_type='PAYMENT_RECEIVED',
+                description=f"Deposit Payment of ₹{paid_val} received via {payment_method_str}.",
+                actor_user=user
+            )
 
         # Update Group Block pickup count
         if group_block:
@@ -609,10 +710,22 @@ class CheckInCheckOutEngine:
                 res_guest.checked_out_at = timezone.now()
                 res_guest.save(update_fields=['checked_out_at'])
 
-            # Clean housekeeping state on the room
+            # Clean housekeeping state on the room (automatically converts room to dirty)
             if alloc.inventory_unit:
                 alloc.inventory_unit.housekeeping_status = 'dirty'
                 alloc.inventory_unit.save(update_fields=['housekeeping_status'])
+
+                # Auto-create a pending RUSH cleaning task in Housekeeping
+                try:
+                    from apps.features.housekeeping.models import CleaningTask
+                    CleaningTask.objects.get_or_create(
+                        tenant=tenant,
+                        room=alloc.inventory_unit,
+                        status='PENDING',
+                        defaults={'priority': 'RUSH'}
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not auto-create cleaning task for room {alloc.inventory_unit.name}: {e}")
 
         ReservationEvent.objects.create(
             tenant=tenant,
@@ -957,6 +1070,8 @@ class PricingEngine:
         
         breakdown = []
         
+        matched_tax_labels = []
+
         # Calculate rates for allocations
         for alloc in data.get('allocations', []):
             try:
@@ -967,27 +1082,40 @@ class PricingEngine:
                 unit_type_name = "Room"
                 
             alloc_total = Decimal('0.00')
+            night_count = len(alloc.get('nightly_rates', [])) or 1
             for rate_day in alloc.get('nightly_rates', []):
                 amt = Decimal(str(rate_day.get('amount', 0)))
                 alloc_total += amt
             
+            per_night_tariff = alloc_total / Decimal(str(night_count))
+            guest_cnt = alloc.get('adult_count', 2) + alloc.get('child_count', 0)
+            alloc_tax, tax_lbl = calculate_item_tax(
+                tenant=tenant,
+                item_price=alloc_total,
+                per_night_tariff=per_night_tariff,
+                guests_count=guest_cnt
+            )
+            if tax_lbl and tax_lbl not in matched_tax_labels:
+                matched_tax_labels.append(tax_lbl)
+
             breakdown.append({
                 'label': f"Room Charges ({unit_type_name})",
                 'amount': float(alloc_total)
             })
             total_amount += alloc_total
-            tax_amount += alloc_total * Decimal('0.10') # 10% tax simulation
+            tax_amount += alloc_tax
             
         # Add packages
         for pkg_id in data.get('packages', []):
             try:
                 pkg = HospitalityPackage.objects.get(id=pkg_id, tenant=tenant)
+                pkg_tax, _ = calculate_item_tax(tenant=tenant, item_price=pkg.price)
                 breakdown.append({
                     'label': f"Package: {pkg.name}",
                     'amount': float(pkg.price)
                 })
                 total_amount += pkg.price
-                tax_amount += pkg.price * Decimal('0.10')
+                tax_amount += pkg_tax
             except HospitalityPackage.DoesNotExist:
                 pass
                 
@@ -995,12 +1123,13 @@ class PricingEngine:
         for svc_id in data.get('services', []):
             try:
                 svc = Service.objects.get(id=svc_id, tenant=tenant)
+                svc_tax, _ = calculate_item_tax(tenant=tenant, item_price=svc.price)
                 breakdown.append({
                     'label': f"Service: {svc.name}",
                     'amount': float(svc.price)
                 })
                 total_amount += svc.price
-                tax_amount += svc.price * Decimal('0.10')
+                tax_amount += svc_tax
             except Service.DoesNotExist:
                 pass
                 
@@ -1024,9 +1153,10 @@ class PricingEngine:
                 
         total_price = (total_amount + tax_amount) - discount_amount
         
-        # Include simulated tax breakdown row
+        # Include dynamic tax breakdown row with exact DB tax component name
+        tax_row_label = ", ".join(matched_tax_labels) if matched_tax_labels else "GST Tax"
         breakdown.append({
-            'label': "Estimated Tax (10%)",
+            'label': tax_row_label,
             'amount': float(tax_amount)
         })
         

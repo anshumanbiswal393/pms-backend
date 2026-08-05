@@ -5,7 +5,8 @@ from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from drf_spectacular.utils import extend_schema
 from apps.core.accounts.models import (
     AppUser, UserInvitation, UserAssignment, PasswordPolicy, LoginAttempt,
-    AccountLock, UserMFA, UserSession, IPWhitelist, SSOConfiguration, PendingLoginConfirmation
+    AccountLock, UserMFA, UserSession, IPWhitelist, SSOConfiguration, PendingLoginConfirmation,
+    SuperadminIPWhitelist
 )
 from django.core.signing import TimestampSigner, SignatureExpired, BadSignature
 from django.utils import timezone
@@ -14,6 +15,7 @@ import urllib.request
 import json
 from django.core.mail import send_mail
 from django.conf import settings
+from apps.core.tenants.models import Tenant
 from apps.core.accounts.serializers import (
     AppUserSerializer, AppUserCreateSerializer, PlatformUserSerializer,
     PasswordLoginRequestSerializer, RequestOTPRequestSerializer,
@@ -21,7 +23,8 @@ from apps.core.accounts.serializers import (
     ChangePasswordSerializer, ForgotPasswordSerializer, ResetPasswordSerializer,
     UserInvitationSerializer, UserAssignmentSerializer, PasswordPolicySerializer,
     LoginAttemptSerializer, AccountLockSerializer, UserMFASerializer,
-    UserSessionSerializer, IPWhitelistSerializer, SSOConfigurationSerializer
+    UserSessionSerializer, IPWhitelistSerializer, SSOConfigurationSerializer,
+    SuperadminIPWhitelistSerializer
 )
 from apps.core.accounts.services import AuthService
 
@@ -472,7 +475,7 @@ class LogoutView(APIView):
 
 class LogoutAllSessionsView(APIView):
     """
-    Invalidates all outstanding tokens and deactivates active UserSessions for the user.
+    Invalidates all outstanding tokens and deactivates active UserSessions for the user or tenant.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -480,7 +483,14 @@ class LogoutAllSessionsView(APIView):
         from apps.core.accounts.models import UserSession
         from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
         
-        sessions = UserSession.objects.filter(user=request.user, is_active=True)
+        user = request.user
+        tenant = getattr(request, 'tenant', None)
+
+        if user.is_superuser or user.is_staff or not tenant:
+            sessions = UserSession.objects.filter(user=user, is_active=True)
+        else:
+            sessions = UserSession.objects.filter(user__tenant=tenant, is_active=True)
+
         for s in sessions:
             s.is_active = False
             s.revoked_at = timezone.now()
@@ -489,7 +499,10 @@ class LogoutAllSessionsView(APIView):
             if s.refresh_token_jti:
                 outstanding = OutstandingToken.objects.filter(jti=s.refresh_token_jti).first()
                 if outstanding:
-                    BlacklistedToken.objects.get_or_create(token=outstanding)
+                    try:
+                        BlacklistedToken.objects.get_or_create(token=outstanding)
+                    except Exception:
+                        pass
 
         return Response({'message': 'Logged out of all sessions successfully.'}, status=status.HTTP_200_OK)
 
@@ -527,10 +540,10 @@ class ChangePasswordView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
-        old_password = serializer.validated_data['old_password']
+        old_password = serializer.validated_data.get('old_password', '')
         new_password = serializer.validated_data['new_password']
 
-        if not user.check_password(old_password):
+        if old_password and not user.check_password(old_password):
             return Response({'error': 'Incorrect current password.'}, status=status.HTTP_400_BAD_REQUEST)
 
         user.set_password(new_password)
@@ -548,6 +561,10 @@ class ForgotPasswordView(APIView):
 
     def post(self, request):
         tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            subdomain = request.headers.get('X-Tenant-Subdomain') or request.META.get('HTTP_X_TENANT_SUBDOMAIN')
+            if subdomain:
+                tenant = Tenant.objects.filter(subdomain=subdomain).first()
         if not tenant:
             return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -614,6 +631,10 @@ class ResetPasswordView(APIView):
 
     def post(self, request):
         tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            subdomain = request.headers.get('X-Tenant-Subdomain') or request.META.get('HTTP_X_TENANT_SUBDOMAIN')
+            if subdomain:
+                tenant = Tenant.objects.filter(subdomain=subdomain).first()
         if not tenant:
             return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -883,24 +904,31 @@ class MFAVerifyView(APIView):
 class SessionViewSet(viewsets.ModelViewSet):
     serializer_class = UserSessionSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
 
     def get_queryset(self):
+        from datetime import timedelta
         user = self.request.user
         tenant = getattr(self.request, 'tenant', None)
+
+        # 1. Automatically clear sessions older than 7 days from database
+        cutoff_7_days = timezone.now() - timedelta(days=7)
+        UserSession.objects.filter(started_at__lt=cutoff_7_days).delete()
+
+        # 2. Return active / recent sessions for the last 7 days only
         if user.is_superuser or user.is_staff or not tenant:
-            return UserSession.objects.filter(user=user)
-        return UserSession.objects.filter(user__tenant=tenant)
+            return UserSession.objects.filter(user=user, started_at__gte=cutoff_7_days).order_by('-started_at')
+        return UserSession.objects.filter(user__tenant=tenant, started_at__gte=cutoff_7_days).order_by('-started_at')
 
 
 class SessionRevokeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        session_id = request.data.get('session_id')
+        session_id = request.data.get('session_id') or request.data.get('id')
         if not session_id:
             return Response({'error': 'session_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        from django.utils import timezone
         session = UserSession.objects.filter(id=session_id).first()
         if session:
             session.is_active = False
@@ -911,7 +939,10 @@ class SessionRevokeView(APIView):
                 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
                 outstanding = OutstandingToken.objects.filter(jti=session.refresh_token_jti).first()
                 if outstanding:
-                    BlacklistedToken.objects.get_or_create(token=outstanding)
+                    try:
+                        BlacklistedToken.objects.get_or_create(token=outstanding)
+                    except Exception:
+                        pass
                     
             return Response({'message': 'Session revoked successfully.'}, status=status.HTTP_200_OK)
         return Response({'error': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -1003,6 +1034,8 @@ class DashboardStatsView(APIView):
             for sub in active_subs:
                 if sub.plan:
                     total_mrr += float(sub.plan.price or 0.0)
+                else:
+                    total_mrr += float(sub.price or 0.0)
             
             # Daily revenue representation
             revenue_today = total_mrr / 30.0 if total_mrr > 0 else 499.93
@@ -1231,4 +1264,21 @@ class CheckConfirmationStatusView(APIView):
             return Response({
                 'status': 'pending'
             }, status=status.HTTP_200_OK)
+
+
+class SuperadminIPWhitelistViewSet(viewsets.ModelViewSet):
+    """
+    Platform-level IP whitelisting management for Superadmins.
+    """
+    serializer_class = SuperadminIPWhitelistSerializer
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+
+    def get_queryset(self):
+        if not (self.request.user and (self.request.user.is_superuser or getattr(self.request.user, 'role_code', '') == 'super_admin')):
+            return SuperadminIPWhitelist.objects.none()
+        return SuperadminIPWhitelist.objects.all()
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
 

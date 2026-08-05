@@ -104,8 +104,8 @@ class RatePlan(BaseModel):
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='rate_plans')
     property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='rate_plans')
-    cancellation_policy = models.ForeignKey(CancellationPolicy, on_delete=models.PROTECT, related_name='rate_plans')
-    child_policy = models.ForeignKey(ChildPolicy, on_delete=models.PROTECT, related_name='rate_plans')
+    cancellation_policy = models.ForeignKey(CancellationPolicy, on_delete=models.PROTECT, null=True, blank=True, related_name='rate_plans')
+    child_policy = models.ForeignKey(ChildPolicy, on_delete=models.PROTECT, null=True, blank=True, related_name='rate_plans')
     default_meal_plan = models.ForeignKey(MealPlan, on_delete=models.PROTECT, null=True, blank=True, related_name='rate_plans')
     
     code = models.CharField(max_length=32)
@@ -120,11 +120,11 @@ class RatePlan(BaseModel):
         ]
 
     def clean(self):
-        if self.property.tenant != self.tenant:
+        if self.property and self.property.tenant != self.tenant:
             raise ValidationError("Property must belong to the resolved tenant context.")
-        if self.cancellation_policy.tenant != self.tenant:
+        if self.cancellation_policy and self.cancellation_policy.tenant != self.tenant:
             raise ValidationError("Cancellation policy must belong to the resolved tenant context.")
-        if self.child_policy.tenant != self.tenant:
+        if self.child_policy and self.child_policy.tenant != self.tenant:
             raise ValidationError("Child policy must belong to the resolved tenant context.")
         if self.default_meal_plan and self.default_meal_plan.tenant and self.default_meal_plan.tenant != self.tenant:
             raise ValidationError("Meal plan must belong to the resolved tenant context or be a system default.")

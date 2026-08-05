@@ -24,9 +24,9 @@ from apps.core.accounts.views import (
     LockUserView, UnlockUserView, MFAEnableView, MFADisableView, MFAVerifyView,
     SessionViewSet, SessionRevokeView, IPWhitelistViewSet, SSOConfigurationViewSet,
     PlatformUserViewSet, DashboardStatsView, LogoutAllSessionsView, ConfirmLoginView,
-    CheckConfirmationStatusView
+    CheckConfirmationStatusView, SuperadminIPWhitelistViewSet
 )
-from apps.core.audit.views import AuditLogViewSet
+from apps.core.audit.views import AuditLogViewSet, SuperadminAuditLogViewSet
 from apps.features.inventory.views import BuildingViewSet, FloorViewSet, FloorPlanViewSet
 from apps.core.subscriptions.views import (
     ProductViewSet, ProductFeatureViewSet, LicenseViewSet,
@@ -69,9 +69,12 @@ router.register(r'user-property-roles', UserPropertyRoleViewSet, basename='userp
 # Accounts
 router.register(r'users', UserViewSet, basename='user')
 router.register(r'superadmin-users', PlatformUserViewSet, basename='superadminuser')
+router.register(r'superadmin-ip-whitelist', SuperadminIPWhitelistViewSet, basename='superadminipwhitelist')
 
 # Audit Logs
 router.register(r'audit-logs', AuditLogViewSet, basename='auditlog')
+router.register(r'superadmin-audit-logs', SuperadminAuditLogViewSet, basename='superadminauditlog')
+
 
 # Building & Floor Management
 router.register(r'buildings', BuildingViewSet, basename='building')
@@ -193,9 +196,9 @@ urlpatterns = [
     path('api/security/mfa/enable/', MFAEnableView.as_view(), name='mfa_enable'),
     path('api/security/mfa/disable/', MFADisableView.as_view(), name='mfa_disable'),
     path('api/security/mfa/verify/', MFAVerifyView.as_view(), name='mfa_verify'),
-    path('api/security/sessions/', SessionViewSet.as_view({'get': 'list'}), name='sessions'),
     path('api/security/sessions/revoke/', SessionRevokeView.as_view(), name='session_revoke'),
     path('api/security/sessions/logout-all/', LogoutAllSessionsView.as_view(), name='logout_all_sessions'),
+    path('api/security/sessions/', SessionViewSet.as_view({'get': 'list'}), name='sessions'),
     
     # IP Whitelisting & SSO Config
     path('api/security/ip-whitelist/', IPWhitelistViewSet.as_view({'get': 'list', 'post': 'create'}), name='ip_whitelist'),

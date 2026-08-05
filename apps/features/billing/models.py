@@ -9,8 +9,14 @@ from apps.features.front_office.models import GuestFolio
 class TaxRate(BaseModel):
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='tax_rates')
     name = models.CharField(max_length=64)
-    code = models.CharField(max_length=16)
-    percentage = models.DecimalField(max_digits=5, decimal_places=2)
+    code = models.CharField(max_length=64)
+    type = models.CharField(max_length=32, default='gst')
+    percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
+    min_tariff = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    max_tariff = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    flat_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    calculation_base = models.CharField(max_length=32, default='folio_subtotal')
+    inclusive = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
     def clean(self):

@@ -93,10 +93,101 @@ def sync_tenant_products(tenant, plan, start_date, end_date, subscription_id):
         elif limit_type == 'JSON':
             defaults['limit_value_json'] = limit_val
 
+def sync_custom_tenant_features(tenant, subscription, features_data, start_date, end_date):
+    """
+    Syncs custom feature-wise subscription for a tenant:
+    1. Creates/updates TenantSubscriptionFeature records with per-feature prices.
+    2. Provisions TenantProduct and TenantProductLicense for all parent products of the selected features.
+    3. Provisions TenantProductEntitlement for each feature.
+    features_data: list of dicts [{'feature_id': uuid, 'price': float}, ...] or [{'feature_code': str, 'price': float}]
+    """
+    from apps.core.subscriptions.models import (
+        TenantProduct, TenantProductLicense, TenantProductEntitlement,
+        ProductFeature, TenantSubscriptionFeature
+    )
+    from apps.core.accounts.models import AppUser
+    import uuid
+
+    # Suspend previous products
+    TenantProduct.objects.filter(tenant=tenant).update(status='SUSPENDED')
+
+    # Clear old entitlements for tenant products
+    TenantProductEntitlement.objects.filter(tenant_product__tenant=tenant).delete()
+
+    superuser = AppUser.objects.filter(is_superuser=True).first()
+
+    # Clear previous custom features for this subscription
+    TenantSubscriptionFeature.objects.filter(tenant_subscription=subscription).delete()
+
+    parent_products = set()
+
+    for item in features_data:
+        feature_id = item.get('feature_id')
+        feature_code = item.get('feature_code')
+        item_price = item.get('price', 0.00)
+
+        pf = None
+        if feature_id:
+            pf = ProductFeature.objects.filter(id=feature_id).first()
+        elif feature_code:
+            pf = ProductFeature.objects.filter(code=feature_code).first()
+
+        if not pf:
+            continue
+
+        parent_products.add(pf.product)
+
+        # Record custom feature line item
+        TenantSubscriptionFeature.objects.create(
+            tenant_subscription=subscription,
+            product_feature=pf,
+            feature_code=pf.code,
+            price=item_price,
+            is_active=True
+        )
+
+    # Provision parent products & licenses
+    for prod in parent_products:
+        tp, _ = TenantProduct.objects.update_or_create(
+            tenant=tenant,
+            product=prod,
+            defaults={
+                'tenant_subscription': subscription,
+                'activated_at': start_date,
+                'expires_at': end_date,
+                'status': 'ACTIVE'
+            }
+        )
+
+        lic = TenantProductLicense.objects.filter(tenant_product=tp).first()
+        if not lic:
+            TenantProductLicense.objects.create(
+                tenant_product=tp,
+                status='ACTIVE',
+                license_key=f"LIC-{prod.code}-{uuid.uuid4().hex[:12].upper()}",
+                start_date=start_date,
+                end_date=end_date,
+                issued_by=superuser
+            )
+        elif lic.status != 'ACTIVE':
+            lic.status = 'ACTIVE'
+            lic.save()
+
+    # Provision entitlements for all custom features
+    for ts_feat in subscription.features.all():
+        pf = ts_feat.product_feature
+        tp = TenantProduct.objects.filter(tenant=tenant, product=pf.product, status='ACTIVE').first()
+        if not tp:
+            continue
+
         TenantProductEntitlement.objects.update_or_create(
             tenant_product=tp,
-            feature_code=pe.feature_code,
-            defaults=defaults
+            feature_code=pf.code,
+            defaults={
+                'product_feature': pf,
+                'limit_type': 'BOOLEAN',
+                'limit_value_boolean': True
+            }
         )
 
 
@@ -366,17 +457,28 @@ class SubscriptionUsageView(APIView):
                 'entitlements': {}
             }, status=status.HTTP_200_OK)
 
-        entitlements = SubscriptionEntitlement.objects.filter(plan=active_sub.plan)
-        ent_data = {}
-        for ent in entitlements:
-            ent_data[ent.feature_code] = {
-                'type': ent.limit_type,
-                'value': ent.limit_value
-            }
+        plan_name = active_sub.plan.name if active_sub.plan else (active_sub.custom_name or "Custom Subscription")
+        billing_cycle = active_sub.plan.billing_cycle if active_sub.plan else active_sub.billing_cycle
+
+        if active_sub.plan:
+            entitlements = SubscriptionEntitlement.objects.filter(plan=active_sub.plan)
+            ent_data = {}
+            for ent in entitlements:
+                ent_data[ent.feature_code] = {
+                    'type': ent.limit_type,
+                    'value': ent.limit_value
+                }
+        else:
+            ent_data = {}
+            for feat in active_sub.features.all():
+                ent_data[feat.feature_code] = {
+                    'type': 'BOOLEAN',
+                    'value': True
+                }
 
         return Response({
-            'active_plan': active_sub.plan.name,
-            'billing_cycle': active_sub.plan.billing_cycle,
+            'active_plan': plan_name,
+            'billing_cycle': billing_cycle,
             'start_date': active_sub.start_date,
             'end_date': active_sub.end_date,
             'entitlements': ent_data
@@ -577,17 +679,91 @@ class TenantSubscriptionViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         tenant = serializer.validated_data['tenant']
-        plan = serializer.validated_data['plan']
+        plan = serializer.validated_data.get('plan')
+        is_custom = serializer.validated_data.get('is_custom', False) or (plan is None)
+        
         start_date = serializer.validated_data.get('start_date') or timezone.now().date()
         if not serializer.validated_data.get('end_date'):
-            duration = 365 if plan.billing_cycle.upper() == 'YEARLY' else 30
+            cycle = serializer.validated_data.get('billing_cycle', plan.billing_cycle if plan else 'MONTHLY')
+            duration = 365 if cycle.upper() in ['YEARLY', 'ANNUAL'] else 30
             end_date = start_date + timezone.timedelta(days=duration)
         else:
             end_date = serializer.validated_data.get('end_date')
-        status = serializer.validated_data.get('status', 'ACTIVE')
-        if status == 'ACTIVE':
+            
+        status_val = serializer.validated_data.get('status', 'ACTIVE')
+        if status_val == 'ACTIVE':
             TenantSubscription.objects.filter(tenant=tenant, status='ACTIVE').update(status='CANCELLED')
-        sub = serializer.save(start_date=start_date, end_date=end_date)
-        if status == 'ACTIVE':
+            
+        sub = serializer.save(start_date=start_date, end_date=end_date, is_custom=is_custom)
+        
+        features_data = self.request.data.get('features', [])
+        if is_custom or features_data:
+            sync_custom_tenant_features(tenant, sub, features_data, start_date, end_date)
+        elif status_val == 'ACTIVE' and plan:
             sync_tenant_products(tenant, plan, start_date, end_date, sub.id)
+
+    @action(detail=False, methods=['post'], url_path='custom-assign', permission_classes=[permissions.IsAdminUser])
+    def custom_assign(self, request):
+        """
+        POST /api/subscriptions/custom-assign/
+        Payload: {
+          tenant_id: UUID,
+          custom_name: str,
+          billing_cycle: "MONTHLY" | "YEARLY",
+          price: float,
+          currency: "USD" | "INR" etc,
+          start_date?: str,
+          end_date?: str,
+          features: [ { feature_id: UUID, price: float }, ... ]
+        }
+        """
+        tenant_id = request.data.get('tenant_id')
+        if not tenant_id:
+            return Response({'error': 'tenant_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.core.tenants.models import Tenant
+        try:
+            tenant = Tenant.objects.get(id=tenant_id)
+        except Tenant.DoesNotExist:
+            return Response({'error': 'Tenant not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        features_data = request.data.get('features', [])
+        if not features_data:
+            return Response({'error': 'At least one feature is required for a custom subscription.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        custom_name = request.data.get('custom_name') or f"Custom Subscription ({tenant.name})"
+        billing_cycle = request.data.get('billing_cycle', 'MONTHLY').upper()
+        price = request.data.get('price', 0.00)
+        currency = request.data.get('currency', 'USD').upper()
+
+        start_date = request.data.get('start_date') or timezone.now().date()
+        if isinstance(start_date, str):
+            start_date = timezone.datetime.strptime(start_date[:10], '%Y-%m-%d').date()
+
+        if request.data.get('end_date'):
+            end_date = request.data.get('end_date')
+            if isinstance(end_date, str):
+                end_date = timezone.datetime.strptime(end_date[:10], '%Y-%m-%d').date()
+        else:
+            duration = 365 if billing_cycle in ['YEARLY', 'ANNUAL'] else 30
+            end_date = start_date + timezone.timedelta(days=duration)
+
+        TenantSubscription.objects.filter(tenant=tenant, status='ACTIVE').update(status='CANCELLED')
+
+        sub = TenantSubscription.objects.create(
+            tenant=tenant,
+            plan=None,
+            is_custom=True,
+            custom_name=custom_name,
+            billing_cycle=billing_cycle,
+            price=price,
+            currency=currency,
+            start_date=start_date,
+            end_date=end_date,
+            status='ACTIVE'
+        )
+
+        sync_custom_tenant_features(tenant, sub, features_data, start_date, end_date)
+
+        return Response(SuperadminTenantSubscriptionSerializer(sub).data, status=status.HTTP_201_CREATED)
 

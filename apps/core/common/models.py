@@ -58,9 +58,15 @@ class BaseModel(models.Model):
 class SystemTax(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, null=True, blank=True, related_name='system_taxes')
+    code = models.CharField(max_length=64, null=True, blank=True)
     name = models.CharField(max_length=120)
-    rate = models.DecimalField(max_digits=10, decimal_places=2)
+    rate = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     type = models.CharField(max_length=32, default="percentage")  # percentage or fixed
+    min_tariff = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    max_tariff = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    flat_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    calculation_base = models.CharField(max_length=32, default='folio_subtotal')
+    inclusive = models.BooleanField(default=False)
     status = models.CharField(max_length=32, default="active")  # active or inactive
 
     class Meta:
@@ -203,7 +209,7 @@ class OccupancyType(models.Model):
 class BookingSource(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=120, unique=True)
-    icon = models.CharField(max_length=120, blank=True, default="")
+    icon = models.TextField(blank=True, default="")
     details = models.TextField(blank=True, default="")
     is_active = models.BooleanField(default=True)
 

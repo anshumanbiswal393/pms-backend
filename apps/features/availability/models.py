@@ -167,6 +167,12 @@ class GroupBlock(BaseModel):
     release_date = models.DateField(null=True, blank=True)
     pickup_target = models.CharField(max_length=120, default="", blank=True)
     pickup_location = models.CharField(max_length=255, default="", blank=True)
+    paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    payment_method = models.CharField(max_length=64, default="", blank=True)
+    payment_remark = models.CharField(max_length=255, default="", blank=True)
+    id_type = models.CharField(max_length=64, default="", blank=True)
+    id_number = models.CharField(max_length=64, default="", blank=True)
+    address = models.TextField(default="", blank=True)
 
     class Meta:
         constraints = [

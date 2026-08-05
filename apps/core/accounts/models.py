@@ -265,3 +265,20 @@ class PendingLoginConfirmation(models.Model):
     def __str__(self):
         return f"Pending login for {self.user.email} - Status: {self.status}"
 
+
+class SuperadminIPWhitelist(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    ip_address = models.CharField(max_length=45)
+    description = models.CharField(max_length=255, null=True, blank=True)
+    created_by = models.ForeignKey(AppUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='superadmin_ip_whitelists')
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'superadmin_ip_whitelist'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Superadmin Whitelist: {self.ip_address} ({'Active' if self.is_active else 'Inactive'})"
+
+

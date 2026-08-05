@@ -129,32 +129,10 @@ class InventoryHoldSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
-class GroupBlockSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = GroupBlock
-        fields = '__all__'
-        read_only_fields = ('id', 'tenant', 'created_at', 'updated_at', 'created_by', 'updated_by', 'deleted_at')
-
-    def validate(self, data):
-        request = self.context.get('request')
-        tenant = getattr(request, 'tenant', None)
-        prop = data.get('property')
-        if prop and prop.tenant != tenant:
-            raise ValidationError("Property must belong to the resolved tenant context.")
-        return data
-
-    def create(self, validated_data):
-        request = self.context.get('request')
-        tenant = getattr(request, 'tenant', None)
-        user = getattr(request, 'user', None)
-        validated_data['tenant'] = tenant
-        validated_data['created_by'] = user
-        return super().create(validated_data)
-
-
 class GroupBlockAllocationSerializer(serializers.ModelSerializer):
     group_block_code = serializers.CharField(source='group_block.code', read_only=True)
     inventory_unit_type_code = serializers.CharField(source='inventory_unit_type.code', read_only=True)
+    inventory_unit_type_name = serializers.CharField(source='inventory_unit_type.name', read_only=True)
 
     class Meta:
         model = GroupBlockAllocation
@@ -180,6 +158,89 @@ class GroupBlockAllocationSerializer(serializers.ModelSerializer):
         user = getattr(request, 'user', None)
         validated_data['created_by'] = user
         return super().create(validated_data)
+
+
+class GroupBlockSerializer(serializers.ModelSerializer):
+    allocations = GroupBlockAllocationSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = GroupBlock
+        fields = '__all__'
+        read_only_fields = ('id', 'tenant', 'created_at', 'updated_at', 'created_by', 'updated_by', 'deleted_at')
+
+    def validate(self, data):
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None)
+        prop = data.get('property')
+        if prop and prop.tenant != tenant:
+            raise ValidationError("Property must belong to the resolved tenant context.")
+        return data
+
+    def create(self, validated_data):
+        import datetime
+        from django.db import models
+        from apps.features.inventory.models import InventoryUnitType
+
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None)
+        user = getattr(request, 'user', None)
+        validated_data['tenant'] = tenant
+        validated_data['created_by'] = user
+        
+        group_block = super().create(validated_data)
+
+        # Auto-create GroupBlockAllocation records if dates exist
+        start_date = group_block.start_date
+        end_date = group_block.end_date
+        if start_date and end_date and start_date <= end_date:
+            initial_room_selections = self.initial_data.get('room_selections', [])
+            if initial_room_selections:
+                for rs in initial_room_selections:
+                    room_type_id_or_code = rs.get('roomType') or rs.get('inventory_unit_type_id')
+                    ut = None
+                    if room_type_id_or_code:
+                        ut = InventoryUnitType.objects.filter(
+                            tenant=tenant, property=group_block.property
+                        ).filter(
+                            models.Q(id=room_type_id_or_code) | models.Q(code=room_type_id_or_code) | models.Q(name__iexact=room_type_id_or_code)
+                        ).first()
+                    if not ut:
+                        ut = InventoryUnitType.objects.filter(tenant=tenant, property=group_block.property).first()
+
+                    if ut:
+                        assigned_count = len(rs.get('assignedRooms', [])) or group_block.total_rooms or 1
+                        curr_date = start_date
+                        while curr_date < end_date:
+                            GroupBlockAllocation.objects.get_or_create(
+                                group_block=group_block,
+                                inventory_unit_type=ut,
+                                date=curr_date,
+                                defaults={
+                                    'allocated_qty': assigned_count,
+                                    'picked_up_qty': 0,
+                                    'created_by': user
+                                }
+                            )
+                            curr_date += datetime.timedelta(days=1)
+            else:
+                ut = InventoryUnitType.objects.filter(tenant=tenant, property=group_block.property).first()
+                if ut:
+                    total_qty = group_block.total_rooms or 1
+                    curr_date = start_date
+                    while curr_date < end_date:
+                        GroupBlockAllocation.objects.get_or_create(
+                            group_block=group_block,
+                            inventory_unit_type=ut,
+                            date=curr_date,
+                            defaults={
+                                'allocated_qty': total_qty,
+                                'picked_up_qty': 0,
+                                'created_by': user
+                            }
+                        )
+                        curr_date += datetime.timedelta(days=1)
+
+        return group_block
 
 
 class ChannelSerializer(serializers.ModelSerializer):

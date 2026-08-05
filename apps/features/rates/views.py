@@ -91,7 +91,7 @@ class RatePlanViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        rate_plan = serializer.save()
+        rate_plan = serializer.save(tenant=self.request.tenant)
         # Automatically generate version snapshot when created
         RatePlanService.create_version_snapshot(rate_plan)
 
@@ -109,6 +109,9 @@ class RatePlanInventoryTypeViewSet(viewsets.ModelViewSet):
         if not tenant:
             return RatePlanInventoryType.objects.none()
         return RatePlanInventoryType.objects.filter(tenant=tenant)
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.request.tenant)
 
 
 class RatePlanVersionViewSet(viewsets.ReadOnlyModelViewSet):

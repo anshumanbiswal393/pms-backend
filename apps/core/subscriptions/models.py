@@ -13,6 +13,15 @@ class Product(BaseModel):
     class Meta:
         db_table = 'product'
 
+    def save(self, *args, **kwargs):
+        if self.code:
+            import re
+            cleaned = re.sub(r'[^A-Za-z0-9_.-]', '_', self.code.strip())
+            cleaned = re.sub(r'_+', '_', cleaned).strip('_').upper()
+            if cleaned:
+                self.code = cleaned
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.name} ({self.code})"
 
@@ -61,7 +70,12 @@ class SubscriptionEntitlement(models.Model):
 class TenantSubscription(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='subscriptions')
-    plan = models.ForeignKey(SubscriptionPlan, on_delete=models.CASCADE, related_name='tenant_subscriptions')
+    plan = models.ForeignKey(SubscriptionPlan, on_delete=models.CASCADE, null=True, blank=True, related_name='tenant_subscriptions')
+    is_custom = models.BooleanField(default=False)
+    custom_name = models.CharField(max_length=120, null=True, blank=True)
+    billing_cycle = models.CharField(max_length=32, default='MONTHLY') # e.g. MONTHLY, YEARLY
+    price = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    currency = models.CharField(max_length=3, default='USD')
     start_date = models.DateField()
     end_date = models.DateField()
     status = models.CharField(max_length=32, default='ACTIVE') # ACTIVE, EXPIRED, CANCELLED
@@ -70,7 +84,8 @@ class TenantSubscription(models.Model):
         db_table = 'tenant_subscription'
 
     def __str__(self):
-        return f"{self.tenant.name} - {self.plan.name} ({self.status})"
+        plan_str = self.plan.name if self.plan else (self.custom_name or "Custom Subscription")
+        return f"{self.tenant.name} - {plan_str} ({self.status})"
 
 
 class ProductFeature(BaseModel):
@@ -79,6 +94,7 @@ class ProductFeature(BaseModel):
     code = models.CharField(max_length=64, db_index=True)
     name = models.CharField(max_length=120)
     description = models.TextField(null=True, blank=True)
+    price = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -88,8 +104,33 @@ class ProductFeature(BaseModel):
             models.Index(fields=['product', 'code']),
         ]
 
+    def save(self, *args, **kwargs):
+        if self.code:
+            import re
+            cleaned = re.sub(r'[^A-Za-z0-9_.-]', '_', self.code.strip())
+            cleaned = re.sub(r'_+', '_', cleaned).strip('_').upper()
+            if cleaned:
+                self.code = cleaned
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return f"{self.product.code}:{self.code}"
+        return f"{self.product.code}:{self.code} (${self.price})"
+
+
+class TenantSubscriptionFeature(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant_subscription = models.ForeignKey(TenantSubscription, on_delete=models.CASCADE, related_name='features')
+    product_feature = models.ForeignKey(ProductFeature, on_delete=models.CASCADE, related_name='tenant_subscription_features')
+    feature_code = models.CharField(max_length=64, db_index=True)
+    price = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'tenant_subscription_feature'
+        unique_together = ('tenant_subscription', 'product_feature')
+
+    def __str__(self):
+        return f"{self.tenant_subscription.tenant.name} - {self.feature_code} (${self.price})"
 
 
 class TenantProduct(models.Model):

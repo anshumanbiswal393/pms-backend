@@ -69,6 +69,10 @@ class RatePlanSerializer(serializers.ModelSerializer):
         model = RatePlan
         fields = '__all__'
         read_only_fields = ('id', 'tenant', 'created_at', 'updated_at', 'created_by', 'updated_by')
+        extra_kwargs = {
+            'cancellation_policy': {'required': False, 'allow_null': True},
+            'child_policy': {'required': False, 'allow_null': True}
+        }
 
     def validate(self, data):
         request = self.context.get('request')
@@ -97,6 +101,34 @@ class RatePlanSerializer(serializers.ModelSerializer):
         tenant = getattr(request, 'tenant', None)
         validated_data['tenant'] = tenant
         validated_data['created_by'] = request.user if request and request.user.is_authenticated else None
+
+        if not validated_data.get('cancellation_policy') and tenant:
+            default_cancel, _ = CancellationPolicy.objects.get_or_create(
+                tenant=tenant,
+                code="STD_FLEX",
+                defaults={
+                    'name': 'Standard Flexible Cancellation Policy',
+                    'free_cancellation_hours': 24,
+                    'penalty_type': 'PERCENTAGE',
+                    'penalty_value': 100
+                }
+            )
+            validated_data['cancellation_policy'] = default_cancel
+
+        if not validated_data.get('child_policy') and tenant:
+            default_child, _ = ChildPolicy.objects.get_or_create(
+                tenant=tenant,
+                code="STD_CHILD",
+                defaults={
+                    'name': 'Standard Child Policy',
+                    'max_free_age': 5,
+                    'charge_age_from': 6,
+                    'charge_age_to': 12,
+                    'child_flat_charge': 0
+                }
+            )
+            validated_data['child_policy'] = default_child
+
         return super().create(validated_data)
 
 

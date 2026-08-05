@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from apps.core.accounts.models import (
     AppUser, UserInvitation, UserAssignment, PasswordPolicy, LoginAttempt,
-    AccountLock, UserMFA, UserSession, IPWhitelist, SSOConfiguration
+    AccountLock, UserMFA, UserSession, IPWhitelist, SSOConfiguration, SuperadminIPWhitelist
 )
 
 class AppUserSerializer(serializers.ModelSerializer):
@@ -19,7 +19,7 @@ class AppUserSerializer(serializers.ModelSerializer):
             return "Platform Admin"
         from apps.core.subscriptions.models import TenantSubscription
         sub = TenantSubscription.objects.filter(tenant=obj.tenant, status='ACTIVE').first()
-        return sub.plan.name if sub else "Lite Plan"
+        return (sub.plan.name if sub.plan else (sub.custom_name or "Custom Subscription")) if sub else "Lite Plan"
 
     def get_subscription_expiry(self, obj):
         if not obj.tenant:
@@ -165,7 +165,7 @@ class LogoutRequestSerializer(serializers.Serializer):
 
 
 class ChangePasswordSerializer(serializers.Serializer):
-    old_password = serializers.CharField(required=True, write_only=True, style={'input_type': 'password'})
+    old_password = serializers.CharField(required=False, allow_blank=True, default='', write_only=True, style={'input_type': 'password'})
     new_password = serializers.CharField(required=True, write_only=True, style={'input_type': 'password'})
 
     def validate_new_password(self, value):
@@ -250,5 +250,14 @@ class SSOConfigurationSerializer(serializers.ModelSerializer):
     class Meta:
         model = SSOConfiguration
         fields = '__all__'
+
+
+class SuperadminIPWhitelistSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source='created_by.name', read_only=True)
+
+    class Meta:
+        model = SuperadminIPWhitelist
+        fields = '__all__'
+
 
 

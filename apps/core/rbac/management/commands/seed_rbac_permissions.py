@@ -7,68 +7,71 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         self.stdout.write("Seeding RBAC Permissions Catalog...")
 
-        # Definition of all system permissions by category
+        # Definition of all system permissions by category with descriptions
         PERMISSIONS_CATALOG = [
             # Reservations & Front Office
-            {"category": "Reservations", "code": "reservations:view"},
-            {"category": "Reservations", "code": "reservations:create"},
-            {"category": "Reservations", "code": "reservations:update"},
-            {"category": "Reservations", "code": "reservations:cancel"},
-            {"category": "Reservations", "code": "reservations:checkin"},
-            {"category": "Reservations", "code": "reservations:checkout"},
+            {"category": "Reservations", "code": "reservations:view", "description": "View reservation calendar, timeline, and booking details"},
+            {"category": "Reservations", "code": "reservations:create", "description": "Create new reservations and group blocks"},
+            {"category": "Reservations", "code": "reservations:update", "description": "Edit guest details, room assignments, and stay dates"},
+            {"category": "Reservations", "code": "reservations:cancel", "description": "Cancel active bookings and process cancellation policies"},
+            {"category": "Reservations", "code": "reservations:checkin", "description": "Process guest check-in and key card issuance"},
+            {"category": "Reservations", "code": "reservations:checkout", "description": "Process guest check-out and folio settlement"},
 
             # Rooms & Inventory
-            {"category": "Inventory", "code": "inventory:view"},
-            {"category": "Inventory", "code": "inventory:manage"},
-            {"category": "Inventory", "code": "inventory:layout"},
-            {"category": "Inventory", "code": "inventory:status"},
+            {"category": "Inventory", "code": "inventory:view", "description": "View room status, unit types, and floor plans"},
+            {"category": "Inventory", "code": "inventory:manage", "description": "Create and edit unit types, room amenities, and room attributes"},
+            {"category": "Inventory", "code": "inventory:layout", "description": "Configure building layouts, floor maps, and unit matrices"},
+            {"category": "Inventory", "code": "inventory:status", "description": "Update out-of-order and out-of-service room statuses"},
 
             # Rates & Pricing Strategies
-            {"category": "Rates", "code": "rates:view"},
-            {"category": "Rates", "code": "rates:manage"},
-            {"category": "Rates", "code": "rates:packages"},
+            {"category": "Rates", "code": "rates:view", "description": "View rate plans, seasonal pricing, and occupancy multipliers"},
+            {"category": "Rates", "code": "rates:manage", "description": "Configure rate plans, rate rules, and dynamic pricing rules"},
+            {"category": "Rates", "code": "rates:packages", "description": "Configure hospitality packages and meal plan pricing"},
 
             # Services & Add-Ons Catalog
-            {"category": "Services", "code": "services:view"},
-            {"category": "Services", "code": "services:manage"},
+            {"category": "Services", "code": "services:view", "description": "View extra service offerings and amenity catalog"},
+            {"category": "Services", "code": "services:manage", "description": "Create and edit additional guest services and service categories"},
 
             # Billing & Invoicing
-            {"category": "Billing", "code": "billing:view"},
-            {"category": "Billing", "code": "billing:post"},
-            {"category": "Billing", "code": "billing:settle"},
-            {"category": "Billing", "code": "billing:refund"},
+            {"category": "Billing", "code": "billing:view", "description": "View guest folios, invoices, and payment receipts"},
+            {"category": "Billing", "code": "billing:post", "description": "Post custom charges, room charges, and minibar fees"},
+            {"category": "Billing", "code": "billing:settle", "description": "Settle guest folios and accept payments"},
+            {"category": "Billing", "code": "billing:refund", "description": "Process payment refunds and billing adjustments"},
 
             # Housekeeping & Maintenance
-            {"category": "Housekeeping", "code": "housekeeping:view"},
-            {"category": "Housekeeping", "code": "housekeeping:assign"},
-            {"category": "Housekeeping", "code": "housekeeping:status"},
-            {"category": "Housekeeping", "code": "maintenance:view"},
-            {"category": "Housekeeping", "code": "maintenance:manage"},
+            {"category": "Housekeeping", "code": "housekeeping:view", "description": "View housekeeping tasks, linen assignments, and room cleaning statuses"},
+            {"category": "Housekeeping", "code": "housekeeping:assign", "description": "Assign housekeepers to rooms and deep cleaning schedules"},
+            {"category": "Housekeeping", "code": "housekeeping:status", "description": "Update room cleaning and inspection status"},
+            {"category": "Housekeeping", "code": "maintenance:view", "description": "View maintenance tickets and asset issues"},
+            {"category": "Housekeeping", "code": "maintenance:manage", "description": "Create and manage maintenance tickets and asset repairs"},
 
             # CRM & Guests
-            {"category": "CRM", "code": "crm:view"},
-            {"category": "CRM", "code": "crm:manage"},
+            {"category": "CRM", "code": "crm:view", "description": "View guest profiles, stay history, and contact details"},
+            {"category": "CRM", "code": "crm:manage", "description": "Create, edit, merge guest profiles and manage guest tags"},
 
             # Channels & OTAs
-            {"category": "Channels", "code": "channels:view"},
-            {"category": "Channels", "code": "channels:manage"},
+            {"category": "Channels", "code": "channels:view", "description": "View connected OTAs, booking channels, and channel allocations"},
+            {"category": "Channels", "code": "channels:manage", "description": "Configure channel manager integrations and rate parity sync"},
 
             # Analytics & Reports
-            {"category": "Reports", "code": "reports:view"},
-            {"category": "Reports", "code": "reports:export"},
+            {"category": "Reports", "code": "reports:view", "description": "View operational dashboards, RevPAR, ADR, and occupancy reports"},
+            {"category": "Reports", "code": "reports:export", "description": "Export analytics, financial audits, and guest ledger data"},
 
             # System & Administration
-            {"category": "Settings", "code": "settings:view"},
-            {"category": "Settings", "code": "settings:manage"},
-            {"category": "Settings", "code": "users:view"},
-            {"category": "Settings", "code": "users:manage"},
+            {"category": "Settings", "code": "settings:view", "description": "View tenant setup, branding, and system configurations"},
+            {"category": "Settings", "code": "settings:manage", "description": "Modify system parameters, taxes, currencies, and shift schedules"},
+            {"category": "Settings", "code": "users:view", "description": "View staff users, assigned properties, and active roles"},
+            {"category": "Settings", "code": "users:manage", "description": "Invite users, manage staff accounts, and assign custom roles"},
         ]
 
         permission_objs = {}
         for item in PERMISSIONS_CATALOG:
             perm, created = Permission.objects.update_or_create(
                 code=item["code"],
-                defaults={"category": item["category"]}
+                defaults={
+                    "category": item["category"],
+                    "description": item["description"]
+                }
             )
             permission_objs[item["code"]] = perm
 

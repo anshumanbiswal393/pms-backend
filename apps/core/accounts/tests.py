@@ -141,7 +141,10 @@ class PasswordManagementAPITests(APITestCase):
         self.assertIn('Incorrect current password', response.data['error'])
 
     def test_forgot_and_reset_password_email_flow(self):
-        # Forgot password
+        self.user.failed_login_attempts = 0
+        self.user.locked_until = None
+        self.user.save()
+        # Forgot password email
         response = self.client.post('/api/auth/forgot-password/', {
             'email': 'user@test.com',
             'reset_method': 'email'
@@ -161,6 +164,9 @@ class PasswordManagementAPITests(APITestCase):
         self.assertTrue(self.user.check_password('ResetPassword123!'))
 
     def test_forgot_and_reset_password_otp_flow(self):
+        self.user.failed_login_attempts = 0
+        self.user.locked_until = None
+        self.user.save()
         # Forgot password OTP
         response = self.client.post('/api/auth/forgot-password/', {
             'email': 'user@test.com',

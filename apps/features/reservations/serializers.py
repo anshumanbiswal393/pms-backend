@@ -1,8 +1,25 @@
 from rest_framework import serializers
 from apps.features.reservations.models import (
     CorporateAccount, GroupBlock, Reservation, ReservationInventory,
-    ReservationRateSnapshot, ReservationGuest, ReservationEvent
+    ReservationRateSnapshot, ReservationGuest, ReservationEvent,
+    ReservationServiceAddon, ReservationPackage
 )
+
+class ReservationServiceAddonSerializer(serializers.ModelSerializer):
+    service_name = serializers.CharField(source='service.name', read_only=True)
+
+    class Meta:
+        model = ReservationServiceAddon
+        fields = ('id', 'service', 'service_name', 'price')
+
+
+class ReservationPackageSerializer(serializers.ModelSerializer):
+    package_name = serializers.CharField(source='package.name', read_only=True)
+
+    class Meta:
+        model = ReservationPackage
+        fields = ('id', 'package', 'package_name', 'price')
+
 
 class CorporateAccountSerializer(serializers.ModelSerializer):
     class Meta:
@@ -51,6 +68,8 @@ class ReservationInventorySerializer(serializers.ModelSerializer):
 
 class ReservationSerializer(serializers.ModelSerializer):
     room_allocations = ReservationInventorySerializer(many=True, read_only=True)
+    services = ReservationServiceAddonSerializer(many=True, read_only=True)
+    packages = ReservationPackageSerializer(many=True, read_only=True)
     primary_guest_name = serializers.SerializerMethodField()
     reservation_source_name = serializers.CharField(source='reservation_source.name', read_only=True)
 
@@ -101,6 +120,13 @@ class CreateBookingSerializer(serializers.Serializer):
     packages = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
     services = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
     coupon_code = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    couponCode = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    paid_amount = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    paidAmount = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    payment_method = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    paymentMethod = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    payment_remark = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    paymentRemark = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     # Corporate fields
     corporate_po_ref = serializers.CharField(required=False, allow_blank=True, allow_null=True)

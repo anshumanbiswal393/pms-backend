@@ -1,6 +1,11 @@
 import uuid
+import random
 from django.db import models
 from apps.core.common.models import BaseModel
+
+def generate_hotel_id():
+    """Generates a random, non-sequential 5-digit hotel ID string."""
+    return str(random.randint(10000, 99999))
 
 class Tenant(models.Model):
     STATUS_CHOICES = (
@@ -37,6 +42,7 @@ class Property(BaseModel):
     )
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='properties')
+    hotel_id = models.CharField(max_length=5, unique=True, null=True, blank=True, db_index=True)
     name = models.CharField(max_length=120)
     property_type = models.CharField(max_length=32, choices=PROPERTY_TYPE_CHOICES, default='HOTEL')
     
@@ -80,8 +86,17 @@ class Property(BaseModel):
     
     amenities = models.JSONField(default=list, blank=True)
 
+    def save(self, *args, **kwargs):
+        if not self.hotel_id:
+            while True:
+                candidate = generate_hotel_id()
+                if not Property.objects.filter(hotel_id=candidate).exists():
+                    self.hotel_id = candidate
+                    break
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return f"{self.name} - {self.tenant.name}"
+        return f"{self.name} ({self.hotel_id}) - {self.tenant.name}"
 
 
 class TenantBranding(models.Model):

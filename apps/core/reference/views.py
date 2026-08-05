@@ -133,9 +133,13 @@ class StateViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = State.objects.all()
-        country_id = self.request.query_params.get('country')
-        if country_id:
-            queryset = queryset.filter(country_id=country_id)
+        country_param = self.request.query_params.get('country')
+        if country_param:
+            queryset = queryset.filter(
+                models.Q(country_id=country_param) |
+                models.Q(country__code__iexact=country_param) |
+                models.Q(country__name__iexact=country_param)
+            )
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(

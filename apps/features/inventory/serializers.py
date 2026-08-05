@@ -286,9 +286,16 @@ class AmenitySerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context.get('request')
-        tenant = getattr(request, 'tenant', None)
-        validated_data['tenant'] = tenant
-        validated_data['created_by'] = request.user if request and request.user.is_authenticated else None
+        user = getattr(request, 'user', None)
+        is_superadmin = user and user.is_authenticated and (user.is_superuser or getattr(user, 'role', '') == 'super_admin')
+        
+        if is_superadmin:
+            validated_data['tenant'] = None
+        else:
+            tenant = getattr(request, 'tenant', None)
+            validated_data['tenant'] = tenant
+
+        validated_data['created_by'] = user if user and user.is_authenticated else None
         return super().create(validated_data)
 
 

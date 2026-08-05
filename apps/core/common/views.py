@@ -189,11 +189,7 @@ class OccupancyTypeViewSet(TenantAwareSettingsViewSet):
 class BookingSourceViewSet(viewsets.ModelViewSet):
     serializer_class = BookingSourceSerializer
     queryset = BookingSource.objects.all()
-
-    def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
-            return [permissions.IsAuthenticated()]
-        return [permissions.IsAdminUser()]
+    permission_classes = [permissions.IsAuthenticated]
 
 
 class UnifiedSendEmailView(APIView):
