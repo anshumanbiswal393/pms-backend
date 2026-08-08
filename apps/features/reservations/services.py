@@ -611,38 +611,57 @@ class RoomAssignmentEngine:
 
     @staticmethod
     @transaction.atomic
-    def change_room(tenant, allocation_id, new_room_id, user=None):
+    def change_room(tenant, allocation_id, new_room_id, new_check_in_date=None, new_check_out_date=None, user=None):
         allocation = ReservationInventory.objects.get(id=allocation_id, tenant=tenant)
         new_room = InventoryUnit.objects.get(id=new_room_id, tenant=tenant)
 
         if new_room.operational_status != 'operational':
             raise ValidationError(f"Room {new_room.name} is currently offline/under maintenance.")
 
+        target_ci = new_check_in_date if new_check_in_date else allocation.check_in_date
+        target_co = new_check_out_date if new_check_out_date else allocation.check_out_date
+
         check_room_availability(
             tenant=tenant,
             room=new_room,
-            check_in_date=allocation.check_in_date,
-            check_out_date=allocation.check_out_date,
+            check_in_date=target_ci,
+            check_out_date=target_co,
             exclude_allocation_id=allocation.id
         )
 
         old_room_name = allocation.inventory_unit.name if allocation.inventory_unit else "Unassigned"
         allocation.inventory_unit = new_room
+        if new_check_in_date:
+            allocation.check_in_date = new_check_in_date
+        if new_check_out_date:
+            allocation.check_out_date = new_check_out_date
         allocation.assigned_by = user
         allocation.assigned_at = timezone.now()
         allocation.save()
 
+        # Update main reservation arrival/departure dates if this is the primary or single allocation
+        reservation = allocation.reservation
+        if new_check_in_date or new_check_out_date:
+            all_allocs = reservation.room_allocations.all()
+            earliest_ci = min([a.check_in_date for a in all_allocs])
+            latest_co = max([a.check_out_date for a in all_allocs])
+            reservation.arrival_date = earliest_ci
+            reservation.departure_date = latest_co
+            reservation.save(update_fields=['arrival_date', 'departure_date'])
+
         ReservationEvent.objects.create(
             tenant=tenant,
-            reservation=allocation.reservation,
+            reservation=reservation,
             event_type='ROOM_CHANGED',
-            description=f"Room changed from {old_room_name} to {new_room.name}.",
+            description=f"Room/Dates changed from {old_room_name} to {new_room.name} ({target_ci} -> {target_co}).",
             actor_user=user,
             payload_diff=make_serializable({
                 'allocation_id': str(allocation.id),
                 'old_room': old_room_name,
                 'new_room': new_room.name,
-                'new_room_id': str(new_room.id)
+                'new_room_id': str(new_room.id),
+                'check_in_date': str(target_ci),
+                'check_out_date': str(target_co)
             })
         )
         return allocation

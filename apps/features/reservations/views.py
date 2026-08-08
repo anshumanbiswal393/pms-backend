@@ -458,6 +458,8 @@ class ReservationViewSet(viewsets.ModelViewSet):
                 tenant=tenant,
                 allocation_id=serializer.validated_data['allocation_id'],
                 new_room_id=serializer.validated_data['new_room_id'],
+                new_check_in_date=serializer.validated_data.get('new_check_in_date'),
+                new_check_out_date=serializer.validated_data.get('new_check_out_date'),
                 user=request.user
             )
         except DjangoValidationError as e:

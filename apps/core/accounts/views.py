@@ -515,7 +515,9 @@ class CurrentUserView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        tenant = getattr(request.user, 'tenant', getattr(request, 'tenant', None))
+        tenant = getattr(request.user, 'tenant', None) or getattr(request, 'tenant', None)
+        if not tenant:
+            tenant = Tenant.objects.first()
         if not tenant:
             return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
