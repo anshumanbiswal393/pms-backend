@@ -1,0 +1,37 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p ${{ secrets.VM_PORT }} ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Sync files to VM
+        run: |
+          rsync -avz --delete \
+            --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' --exclude='.venv' \
+            --exclude='media' --exclude='staticfiles' --exclude='db.sqlite3' --exclude='.env' \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.VM_PORT }}" \
+            ./ ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:/opt/retrod/retrod-one-backend/
+
+      - name: Build and restart backend
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.VM_PORT }} ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "
+            cd /opt/retrod/retrod-one-backend &&
+            docker compose build backend &&
+            docker compose up -d backend &&
+            docker image prune -f
+          "
