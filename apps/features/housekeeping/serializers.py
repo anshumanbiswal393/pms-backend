@@ -16,7 +16,7 @@ class CleaningTaskSerializer(serializers.ModelSerializer):
 
     def get_assigned_staff_name(self, obj):
         if obj.assigned_staff:
-            return f"{obj.assigned_staff.first_name} {obj.assigned_staff.last_name}".strip() or obj.assigned_staff.username
+            return obj.assigned_staff.name or obj.assigned_staff.username
         return None
 
 
@@ -31,7 +31,7 @@ class RoomInspectionSerializer(serializers.ModelSerializer):
 
     def get_inspector_name(self, obj):
         if obj.inspector:
-            return f"{obj.inspector.first_name} {obj.inspector.last_name}".strip() or obj.inspector.username
+            return obj.inspector.name or obj.inspector.username
         return None
 
 

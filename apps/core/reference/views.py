@@ -1,16 +1,16 @@
 from django.db import models
 from rest_framework import viewsets, permissions
-from apps.core.reference.models import Country, Nationality, Language, Currency, DocumentType, ReservationSource, Timezone, State
+from apps.core.reference.models import Country, Nationality, Language, Currency, DocumentType, ReservationSource, Timezone, State, PaymentMode
 from apps.core.reference.serializers import (
     CountrySerializer, NationalitySerializer, LanguageSerializer,
     CurrencySerializer, DocumentTypeSerializer, ReservationSourceSerializer, TimezoneSerializer,
-    StateSerializer
+    StateSerializer, PaymentModeSerializer
 )
 from apps.core.reference.permissions import IsSuperUserOrReadOnly
 
 class CountryViewSet(viewsets.ModelViewSet):
     serializer_class = CountrySerializer
-    permission_classes = [IsSuperUserOrReadOnly]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         queryset = Country.objects.all()
@@ -27,7 +27,7 @@ class CountryViewSet(viewsets.ModelViewSet):
 
 class NationalityViewSet(viewsets.ModelViewSet):
     serializer_class = NationalitySerializer
-    permission_classes = [IsSuperUserOrReadOnly]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         queryset = Nationality.objects.all()
@@ -44,7 +44,7 @@ class NationalityViewSet(viewsets.ModelViewSet):
 
 class LanguageViewSet(viewsets.ModelViewSet):
     serializer_class = LanguageSerializer
-    permission_classes = [IsSuperUserOrReadOnly]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         queryset = Language.objects.all()
@@ -74,6 +74,24 @@ class CurrencyViewSet(viewsets.ModelViewSet):
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() in ['true', '1'])
         return queryset
+
+
+class PaymentModeViewSet(viewsets.ModelViewSet):
+    serializer_class = PaymentModeSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = PaymentMode.objects.all()
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                models.Q(name__icontains=search) | models.Q(code__icontains=search)
+            )
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() in ['true', '1'])
+        return queryset
+
 
 
 class DocumentTypeViewSet(viewsets.ModelViewSet):

@@ -107,6 +107,7 @@ class RatePlan(BaseModel):
     cancellation_policy = models.ForeignKey(CancellationPolicy, on_delete=models.PROTECT, null=True, blank=True, related_name='rate_plans')
     child_policy = models.ForeignKey(ChildPolicy, on_delete=models.PROTECT, null=True, blank=True, related_name='rate_plans')
     default_meal_plan = models.ForeignKey(MealPlan, on_delete=models.PROTECT, null=True, blank=True, related_name='rate_plans')
+    meal_plans = models.ManyToManyField(MealPlan, blank=True, related_name='included_rate_plans')
     
     code = models.CharField(max_length=32)
     name = models.CharField(max_length=120)
@@ -143,6 +144,10 @@ class RatePlanInventoryType(models.Model):
     rate_plan = models.ForeignKey(RatePlan, on_delete=models.CASCADE, related_name='inventory_types')
     inventory_unit_type = models.ForeignKey(InventoryUnitType, on_delete=models.CASCADE, related_name='rate_plans')
     base_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    extra_adult_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    extra_child_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    guest_rates = models.JSONField(default=dict, blank=True)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
         constraints = [
@@ -156,6 +161,10 @@ class RatePlanInventoryType(models.Model):
             raise ValidationError("Inventory unit type must belong to the resolved tenant context.")
         if self.base_rate < 0:
             raise ValidationError("Base rate cannot be negative.")
+        if self.extra_adult_rate < 0:
+            raise ValidationError("Extra adult rate cannot be negative.")
+        if self.extra_child_rate < 0:
+            raise ValidationError("Extra child rate cannot be negative.")
 
     def save(self, *args, **kwargs):
         self.clean()

@@ -12,7 +12,6 @@ db.sqlite3-journal
 .env
 .venv/
 env/
-venv/
 ENV/
 
 # IDE / Editor folders

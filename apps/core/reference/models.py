@@ -104,3 +104,18 @@ class State(BaseModel):
     def __str__(self):
         return f"{self.name}, {self.country.name}"
 
+
+class PaymentMode(BaseModel):
+    code = models.CharField(max_length=64, unique=True, db_index=True)
+    name = models.CharField(max_length=120)
+    description = models.TextField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name_plural = "Payment Modes"
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
