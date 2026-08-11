@@ -43,6 +43,7 @@ services:
         VITE_API_URL: ${VITE_API_URL}
         VITE_SU_API_URL: ${VITE_SU_API_URL}
         VITE_SU_API_KEY: ${VITE_SU_API_KEY}
+        VITE_RAZORPAY_KEY_ID: ${VITE_RAZORPAY_KEY_ID}
     restart: unless-stopped
     depends_on:
       - backend
