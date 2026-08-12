@@ -52,6 +52,23 @@ class StateSerializer(serializers.ModelSerializer):
         model = State
         fields = '__all__'
 
+    def create(self, validated_data):
+        return super().create(validated_data)
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict) and 'country' in data and isinstance(data['country'], str):
+            country_val = data['country']
+            try:
+                import uuid
+                uuid.UUID(country_val)
+            except ValueError:
+                from apps.core.reference.models import Country
+                country_obj = Country.objects.filter(code__iexact=country_val).first()
+                if country_obj:
+                    data = data.copy()
+                    data['country'] = str(country_obj.id)
+        return super().to_internal_value(data)
+
 
 class PaymentModeSerializer(serializers.ModelSerializer):
     class Meta:
