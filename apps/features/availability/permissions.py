@@ -29,6 +29,9 @@ class HasAvailabilityPermission(permissions.BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
+        if getattr(request.user, 'is_superuser', False) or getattr(request.user, 'is_staff', False):
+            return True
+
         tenant = getattr(request, 'tenant', None)
         if not tenant:
             return False

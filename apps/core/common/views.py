@@ -125,10 +125,15 @@ class TenantAwareSettingsViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
+        user = getattr(self.request, 'user', None)
+        is_superuser = getattr(user, 'is_superuser', False) if user else False
+        if is_superuser:
+            return self.queryset
+
         tenant = getattr(self.request, 'tenant', None)
         if tenant:
             return self.queryset.filter(Q(tenant__isnull=True) | Q(tenant=tenant))
-        return self.queryset
+        return self.queryset.filter(tenant__isnull=True)
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, 'tenant', None)

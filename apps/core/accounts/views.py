@@ -350,15 +350,14 @@ class RequestOTPView(APIView):
         contact = request.data.get('email') or request.data.get('phone') or request.data.get('contact')
 
         if not tenant:
-            # Check if user is a superadmin or tenant-less user
             if contact:
                 user = AppUser.objects.filter(models.Q(email__iexact=contact) | models.Q(username__iexact=contact) | models.Q(phone=contact)).first()
-                if user and (user.is_superuser or user.is_staff or user.tenant is None):
+                if user:
                     tenant = user.tenant
                 else:
-                    return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response({'error': 'User account not found.'}, status=status.HTTP_400_BAD_REQUEST)
             else:
-                return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'error': 'Provide email or phone contact.'}, status=status.HTTP_400_BAD_REQUEST)
         
         from django.conf import settings
         configured_provider = getattr(settings, 'OTP_PROVIDER', 'mock')
@@ -393,12 +392,12 @@ class VerifyOTPView(APIView):
         if not tenant:
             if contact:
                 user = AppUser.objects.filter(models.Q(email__iexact=contact) | models.Q(username__iexact=contact) | models.Q(phone=contact)).first()
-                if user and (user.is_superuser or user.is_staff or user.tenant is None):
+                if user:
                     tenant = user.tenant
                 else:
-                    return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response({'error': 'User account not found.'}, status=status.HTTP_400_BAD_REQUEST)
             else:
-                return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'error': 'Provide contact details and OTP code.'}, status=status.HTTP_400_BAD_REQUEST)
 
         if not contact or not otp_code:
             return Response({'error': 'Provide contact details and OTP code.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -534,7 +533,8 @@ class CurrentUserView(APIView):
         tenant = getattr(request.user, 'tenant', None) or getattr(request, 'tenant', None)
         if not tenant:
             tenant = Tenant.objects.first()
-        if not tenant:
+
+        if not tenant and not request.user.is_superuser:
             return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
         meta = AuthService.get_user_metadata(request.user, tenant)
