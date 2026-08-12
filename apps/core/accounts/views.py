@@ -85,7 +85,10 @@ def get_location_from_ip(ip):
 
 def send_login_confirmation_email(pending_confirmation, request):
     from django.conf import settings
-    base_url = getattr(settings, 'APP_BASE_URL', None) or request.build_absolute_uri('/')[:-1]
+    if settings.DEBUG:
+        base_url = request.build_absolute_uri('/')[:-1]
+    else:
+        base_url = getattr(settings, 'APP_BASE_URL', None) or 'https://app.dev.retrod.in:8443'
     base_url = base_url.rstrip('/')
     approve_url = f"{base_url}/api/auth/confirm-login/?id={pending_confirmation.id}&status=approve"
     reject_url = f"{base_url}/api/auth/confirm-login/?id={pending_confirmation.id}&status=reject"
