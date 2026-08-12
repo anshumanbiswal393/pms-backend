@@ -420,15 +420,8 @@ class VerifyOTPView(APIView):
         AuthService.create_user_session(user, tokens, request)
         meta = AuthService.get_user_metadata(user, tenant)
 
-        # Check if 2FA double confirmation is enabled
-        config = getattr(tenant, 'configuration', None)
-        double_confirm_enabled = True
-        if config:
-            double_confirm_enabled = getattr(config, 'mfa_double_confirmation', True)
-
-        # Superadmins must ALWAYS use MFA double confirmation for platform security
-        if user.is_superuser:
-            double_confirm_enabled = True
+        # Check if 2FA double confirmation is enabled (disabled for all accounts for now per user instruction)
+        double_confirm_enabled = False
 
         if not double_confirm_enabled:
             return Response({
