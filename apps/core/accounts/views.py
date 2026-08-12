@@ -84,9 +84,11 @@ def get_location_from_ip(ip):
     return "New Delhi, Delhi, India"
 
 def send_login_confirmation_email(pending_confirmation, request):
-    host = request.build_absolute_uri('/')[:-1]
-    approve_url = f"{host}/api/auth/confirm-login/?id={pending_confirmation.id}&status=approve"
-    reject_url = f"{host}/api/auth/confirm-login/?id={pending_confirmation.id}&status=reject"
+    from django.conf import settings
+    base_url = getattr(settings, 'APP_BASE_URL', None) or request.build_absolute_uri('/')[:-1]
+    base_url = base_url.rstrip('/')
+    approve_url = f"{base_url}/api/auth/confirm-login/?id={pending_confirmation.id}&status=approve"
+    reject_url = f"{base_url}/api/auth/confirm-login/?id={pending_confirmation.id}&status=reject"
     
     html_content = f"""<!DOCTYPE html>
 <html>
