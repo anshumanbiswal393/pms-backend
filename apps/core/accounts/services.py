@@ -310,7 +310,7 @@ class AuthService:
         User details, roles/permissions list, and authorized properties.
         """
         # Resolve properties and roles mapped to user
-        property_roles = UserPropertyRole.objects.filter(user=user, tenant=tenant)
+        property_roles = UserPropertyRole.objects.filter(user=user, tenant=tenant) if tenant else []
         properties = []
         permissions = set()
         
@@ -326,7 +326,7 @@ class AuthService:
 
         # Resolve tenant-wide assignment role and permissions (e.g. for owner onboarding)
         from apps.core.accounts.models import UserAssignment
-        assignment = UserAssignment.objects.filter(user=user, tenant=tenant).first()
+        assignment = UserAssignment.objects.filter(user=user, tenant=tenant).first() if tenant else None
         user_role = assignment.role.code if (assignment and assignment.role) else None
 
         if assignment and assignment.role:
@@ -337,23 +337,24 @@ class AuthService:
         if user.is_superuser:
             user_role = 'super_admin'
             permissions.add("*:*")  # Wildcard system permission
-            from apps.core.tenants.models import Property
-            for p in Property.objects.filter(tenant=tenant):
-                properties.append({
-                    'id': str(p.id),
-                    'name': p.name,
-                    'role': 'super_admin'
-                })
+            if tenant:
+                from apps.core.tenants.models import Property
+                for p in Property.objects.filter(tenant=tenant):
+                    properties.append({
+                        'id': str(p.id),
+                        'name': p.name,
+                        'role': 'super_admin'
+                    })
 
         # Fetch subscription plan details
         from apps.core.subscriptions.models import TenantSubscription, TenantProductLicense
-        sub = TenantSubscription.objects.filter(tenant=tenant, status='ACTIVE').first()
+        sub = TenantSubscription.objects.filter(tenant=tenant, status='ACTIVE').first() if tenant else None
         sub_plan = (sub.plan.name if sub.plan else (sub.custom_name or "Custom Subscription")) if sub else "Standard Enterprise Plan"
         sub_expiry = str(sub.end_date) if sub else "2027-01-31"
         
         # Fetch license key
-        lic = TenantProductLicense.objects.filter(tenant_product__tenant=tenant, tenant_product__product__code='PMS', status='ACTIVE').first()
-        if not lic:
+        lic = TenantProductLicense.objects.filter(tenant_product__tenant=tenant, tenant_product__product__code='PMS', status='ACTIVE').first() if tenant else None
+        if not lic and tenant:
             lic = TenantProductLicense.objects.filter(tenant_product__tenant=tenant, status='ACTIVE').first()
         license_key = lic.license_key if lic else "RETROD-LNX-8394-2026"
 
@@ -368,6 +369,7 @@ class AuthService:
                 'preferred_language': user.preferred_language,
                 'preferred_timezone': user.preferred_timezone,
                 'role': user_role,
+                'is_superuser': user.is_superuser,
                 'tenant_subdomain': user.tenant.subdomain if user.tenant else None,
                 'subscription_plan': sub_plan,
                 'subscription_expiry': sub_expiry,

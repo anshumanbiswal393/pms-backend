@@ -1,3 +1,4 @@
+from django.db import models
 from rest_framework import viewsets, permissions, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -83,9 +84,11 @@ def get_location_from_ip(ip):
     return "New Delhi, Delhi, India"
 
 def send_login_confirmation_email(pending_confirmation, request):
-    host = request.build_absolute_uri('/')[:-1]
-    approve_url = f"{host}/api/auth/confirm-login/?id={pending_confirmation.id}&status=approve"
-    reject_url = f"{host}/api/auth/confirm-login/?id={pending_confirmation.id}&status=reject"
+    from django.conf import settings
+    base_url = getattr(settings, 'APP_BASE_URL', None) or request.build_absolute_uri('/')[:-1]
+    base_url = base_url.rstrip('/')
+    approve_url = f"{base_url}/api/auth/confirm-login/?id={pending_confirmation.id}&status=approve"
+    reject_url = f"{base_url}/api/auth/confirm-login/?id={pending_confirmation.id}&status=reject"
     
     html_content = f"""<!DOCTYPE html>
 <html>
@@ -346,10 +349,17 @@ class RequestOTPView(APIView):
 
     def post(self, request):
         tenant = getattr(request, 'tenant', None)
-        if not tenant:
-            return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
-
         contact = request.data.get('email') or request.data.get('phone') or request.data.get('contact')
+
+        if not tenant:
+            if contact:
+                user = AppUser.objects.filter(models.Q(email__iexact=contact) | models.Q(username__iexact=contact) | models.Q(phone=contact)).first()
+                if user:
+                    tenant = user.tenant
+                else:
+                    return Response({'error': 'User account not found.'}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({'error': 'Provide email or phone contact.'}, status=status.HTTP_400_BAD_REQUEST)
         
         from django.conf import settings
         configured_provider = getattr(settings, 'OTP_PROVIDER', 'mock')
@@ -378,11 +388,18 @@ class VerifyOTPView(APIView):
 
     def post(self, request):
         tenant = getattr(request, 'tenant', None)
-        if not tenant:
-            return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
-
         contact = request.data.get('email') or request.data.get('phone') or request.data.get('contact')
         otp_code = request.data.get('otp_code') or request.data.get('otp')
+
+        if not tenant:
+            if contact:
+                user = AppUser.objects.filter(models.Q(email__iexact=contact) | models.Q(username__iexact=contact) | models.Q(phone=contact)).first()
+                if user:
+                    tenant = user.tenant
+                else:
+                    return Response({'error': 'User account not found.'}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({'error': 'Provide contact details and OTP code.'}, status=status.HTTP_400_BAD_REQUEST)
 
         if not contact or not otp_code:
             return Response({'error': 'Provide contact details and OTP code.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -518,7 +535,8 @@ class CurrentUserView(APIView):
         tenant = getattr(request.user, 'tenant', None) or getattr(request, 'tenant', None)
         if not tenant:
             tenant = Tenant.objects.first()
-        if not tenant:
+
+        if not tenant and not request.user.is_superuser:
             return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
         meta = AuthService.get_user_metadata(request.user, tenant)

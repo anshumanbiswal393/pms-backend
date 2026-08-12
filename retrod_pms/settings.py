@@ -168,6 +168,7 @@ CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
     "http://127.0.0.1:5173",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://144.31.146.64:3000"
 ])
 
 CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
@@ -213,7 +214,7 @@ REST_FRAMEWORK = {
 
 # JWT Token configuration
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=30),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
@@ -246,8 +247,9 @@ EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='no-reply@retrod.io')
 
-# OTP Configuration
+# OTP & Domain Configuration
 OTP_PROVIDER = env('OTP_PROVIDER', default='mock')
+APP_BASE_URL = env('APP_BASE_URL', default='https://app.dev.retrod.in')
 
 # Caching with Redis
 CACHES = {

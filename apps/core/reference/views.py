@@ -147,17 +147,20 @@ class TimezoneViewSet(viewsets.ModelViewSet):
 
 class StateViewSet(viewsets.ModelViewSet):
     serializer_class = StateSerializer
-    permission_classes = [IsSuperUserOrReadOnly]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         queryset = State.objects.all()
         country_param = self.request.query_params.get('country')
         if country_param:
-            queryset = queryset.filter(
-                models.Q(country_id=country_param) |
-                models.Q(country__code__iexact=country_param) |
-                models.Q(country__name__iexact=country_param)
-            )
+            country_q = models.Q(country__code__iexact=country_param) | models.Q(country__name__iexact=country_param)
+            try:
+                import uuid
+                uuid.UUID(str(country_param))
+                country_q |= models.Q(country_id=country_param)
+            except ValueError:
+                pass
+            queryset = queryset.filter(country_q)
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
