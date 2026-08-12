@@ -346,10 +346,18 @@ class RequestOTPView(APIView):
 
     def post(self, request):
         tenant = getattr(request, 'tenant', None)
-        if not tenant:
-            return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
-
         contact = request.data.get('email') or request.data.get('phone') or request.data.get('contact')
+
+        if not tenant:
+            # Check if user is a superadmin or tenant-less user
+            if contact:
+                user = AppUser.objects.filter(models.Q(email__iexact=contact) | models.Q(username__iexact=contact) | models.Q(phone=contact)).first()
+                if user and (user.is_superuser or user.is_staff or user.tenant is None):
+                    tenant = user.tenant
+                else:
+                    return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
         
         from django.conf import settings
         configured_provider = getattr(settings, 'OTP_PROVIDER', 'mock')
@@ -378,11 +386,18 @@ class VerifyOTPView(APIView):
 
     def post(self, request):
         tenant = getattr(request, 'tenant', None)
-        if not tenant:
-            return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
-
         contact = request.data.get('email') or request.data.get('phone') or request.data.get('contact')
         otp_code = request.data.get('otp_code') or request.data.get('otp')
+
+        if not tenant:
+            if contact:
+                user = AppUser.objects.filter(models.Q(email__iexact=contact) | models.Q(username__iexact=contact) | models.Q(phone=contact)).first()
+                if user and (user.is_superuser or user.is_staff or user.tenant is None):
+                    tenant = user.tenant
+                else:
+                    return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
         if not contact or not otp_code:
             return Response({'error': 'Provide contact details and OTP code.'}, status=status.HTTP_400_BAD_REQUEST)
