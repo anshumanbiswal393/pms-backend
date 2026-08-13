@@ -29,8 +29,7 @@ class HasRatePermission(permissions.BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        user_role = str(getattr(request.user, 'role', '') or '').lower()
-        if getattr(request.user, 'is_superuser', False) or getattr(request.user, 'is_staff', False) or user_role in ['super_admin', 'superadmin', 'owner', 'tenant_admin', 'hotel_owner', 'admin']:
+        if getattr(request.user, 'is_superuser', False) or getattr(request.user, 'is_staff', False):
             return True
 
         tenant = getattr(request, 'tenant', None)

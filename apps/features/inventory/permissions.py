@@ -15,22 +15,21 @@ class HasInventoryPermission(permissions.BasePermission):
             return self.required_permission
         
         if view.action in ['list', 'retrieve']:
-            return ['inventory.view', 'rooms.view']
+            return ['inventory.view', 'rooms.view', 'rooms.manage', 'inventory.manage']
         elif view.action == 'create':
-            return ['inventory.create', 'rooms.create']
+            return ['inventory.create', 'rooms.create', 'rooms.manage', 'inventory.manage']
         elif view.action in ['update', 'partial_update']:
-            return ['inventory.edit', 'rooms.edit']
+            return ['inventory.edit', 'rooms.edit', 'rooms.manage', 'inventory.manage']
         elif view.action == 'destroy':
-            return ['inventory.delete', 'rooms.delete']
+            return ['inventory.delete', 'rooms.delete', 'rooms.manage', 'inventory.manage']
         
-        return ['inventory.view', 'rooms.view']
+        return ['inventory.view', 'rooms.view', 'rooms.manage', 'inventory.manage']
 
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        user_role = str(getattr(request.user, 'role', '') or '').lower()
-        if getattr(request.user, 'is_superuser', False) or getattr(request.user, 'is_staff', False) or user_role in ['super_admin', 'superadmin', 'owner', 'tenant_admin', 'hotel_owner', 'admin']:
+        if getattr(request.user, 'is_superuser', False) or getattr(request.user, 'is_staff', False):
             return True
 
         tenant = getattr(request, 'tenant', None)

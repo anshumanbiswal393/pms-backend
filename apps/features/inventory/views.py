@@ -31,7 +31,7 @@ class InventoryUnitCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = InventoryUnitCategorySerializer
     filterset_class = InventoryUnitCategoryFilter
     search_fields = ['code', 'name']
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [HasInventoryPermission]
 
     def get_queryset(self):
         tenant = getattr(self.request, 'tenant', None)

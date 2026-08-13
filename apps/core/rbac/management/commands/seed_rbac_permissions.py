@@ -17,16 +17,40 @@ class Command(BaseCommand):
             {"category": "Reservations", "code": "reservations:checkin", "description": "Process guest check-in and key card issuance"},
             {"category": "Reservations", "code": "reservations:checkout", "description": "Process guest check-out and folio settlement"},
 
+            {"category": "Reservations", "code": "reservations.view", "description": "View reservation calendar, timeline, and booking details"},
+            {"category": "Reservations", "code": "reservations.create", "description": "Create new reservations and group blocks"},
+            {"category": "Reservations", "code": "reservations.edit", "description": "Edit guest details, room assignments, and stay dates"},
+            {"category": "Reservations", "code": "reservations.cancel", "description": "Cancel active bookings and process cancellation policies"},
+            {"category": "Reservations", "code": "reservations.manage", "description": "Full reservation control and policy override"},
+
             # Rooms & Inventory
             {"category": "Inventory", "code": "inventory:view", "description": "View room status, unit types, and floor plans"},
             {"category": "Inventory", "code": "inventory:manage", "description": "Create and edit unit types, room amenities, and room attributes"},
             {"category": "Inventory", "code": "inventory:layout", "description": "Configure building layouts, floor maps, and unit matrices"},
             {"category": "Inventory", "code": "inventory:status", "description": "Update out-of-order and out-of-service room statuses"},
 
+            {"category": "Inventory", "code": "inventory.view", "description": "View room status, unit types, and floor plans"},
+            {"category": "Inventory", "code": "inventory.create", "description": "Create unit types, rooms, amenities, and room attributes"},
+            {"category": "Inventory", "code": "inventory.edit", "description": "Edit unit types, rooms, amenities, and room attributes"},
+            {"category": "Inventory", "code": "inventory.delete", "description": "Delete unit types, rooms, amenities, and room attributes"},
+            {"category": "Inventory", "code": "inventory.manage", "description": "Full management of unit types, rooms, amenities, and room attributes"},
+
+            {"category": "Rooms", "code": "rooms.view", "description": "View room types and room details"},
+            {"category": "Rooms", "code": "rooms.create", "description": "Create room types and room numbers"},
+            {"category": "Rooms", "code": "rooms.edit", "description": "Edit room types and room numbers"},
+            {"category": "Rooms", "code": "rooms.delete", "description": "Delete room types and room numbers"},
+            {"category": "Rooms", "code": "rooms.manage", "description": "Full management of room types and room inventory"},
+
             # Rates & Pricing Strategies
             {"category": "Rates", "code": "rates:view", "description": "View rate plans, seasonal pricing, and occupancy multipliers"},
             {"category": "Rates", "code": "rates:manage", "description": "Configure rate plans, rate rules, and dynamic pricing rules"},
             {"category": "Rates", "code": "rates:packages", "description": "Configure hospitality packages and meal plan pricing"},
+
+            {"category": "Rates", "code": "rates.view", "description": "View rate plans, seasonal pricing, and occupancy multipliers"},
+            {"category": "Rates", "code": "rates.create", "description": "Create rate plans and rate rules"},
+            {"category": "Rates", "code": "rates.edit", "description": "Edit rate plans and rate rules"},
+            {"category": "Rates", "code": "rates.delete", "description": "Delete rate plans and rate rules"},
+            {"category": "Rates", "code": "rates.manage", "description": "Full rate management and pricing rules override"},
 
             # Services & Add-Ons Catalog
             {"category": "Services", "code": "services:view", "description": "View extra service offerings and amenity catalog"},
@@ -38,6 +62,9 @@ class Command(BaseCommand):
             {"category": "Billing", "code": "billing:settle", "description": "Settle guest folios and accept payments"},
             {"category": "Billing", "code": "billing:refund", "description": "Process payment refunds and billing adjustments"},
 
+            {"category": "Billing", "code": "billing.view", "description": "View guest folios, invoices, and payment receipts"},
+            {"category": "Billing", "code": "billing.manage", "description": "Full billing management, settlements, refunds, and adjustments"},
+
             # Housekeeping & Maintenance
             {"category": "Housekeeping", "code": "housekeeping:view", "description": "View housekeeping tasks, linen assignments, and room cleaning statuses"},
             {"category": "Housekeeping", "code": "housekeeping:assign", "description": "Assign housekeepers to rooms and deep cleaning schedules"},
@@ -45,9 +72,19 @@ class Command(BaseCommand):
             {"category": "Housekeeping", "code": "maintenance:view", "description": "View maintenance tickets and asset issues"},
             {"category": "Housekeeping", "code": "maintenance:manage", "description": "Create and manage maintenance tickets and asset repairs"},
 
+            {"category": "Housekeeping", "code": "housekeeping.view", "description": "View housekeeping tasks and room cleaning status"},
+            {"category": "Housekeeping", "code": "housekeeping.manage", "description": "Manage housekeeping assignments and schedules"},
+            {"category": "Maintenance", "code": "maintenance.view", "description": "View maintenance tickets and repairs"},
+            {"category": "Maintenance", "code": "maintenance.manage", "description": "Manage maintenance tickets and repairs"},
+
             # CRM & Guests
             {"category": "CRM", "code": "crm:view", "description": "View guest profiles, stay history, and contact details"},
             {"category": "CRM", "code": "crm:manage", "description": "Create, edit, merge guest profiles and manage guest tags"},
+
+            {"category": "Guests", "code": "guests.view", "description": "View guest profiles"},
+            {"category": "Guests", "code": "guests.create", "description": "Create guest profiles"},
+            {"category": "Guests", "code": "guests.edit", "description": "Edit guest profiles"},
+            {"category": "Guests", "code": "guests.manage", "description": "Full guest profile management"},
 
             # Channels & OTAs
             {"category": "Channels", "code": "channels:view", "description": "View connected OTAs, booking channels, and channel allocations"},
@@ -57,11 +94,23 @@ class Command(BaseCommand):
             {"category": "Reports", "code": "reports:view", "description": "View operational dashboards, RevPAR, ADR, and occupancy reports"},
             {"category": "Reports", "code": "reports:export", "description": "Export analytics, financial audits, and guest ledger data"},
 
+            {"category": "Reports", "code": "reports.view", "description": "View operational dashboards and analytics"},
+            {"category": "Reports", "code": "reports.manage", "description": "Full management of operational reports"},
+
             # System & Administration
             {"category": "Settings", "code": "settings:view", "description": "View tenant setup, branding, and system configurations"},
             {"category": "Settings", "code": "settings:manage", "description": "Modify system parameters, taxes, currencies, and shift schedules"},
             {"category": "Settings", "code": "users:view", "description": "View staff users, assigned properties, and active roles"},
             {"category": "Settings", "code": "users:manage", "description": "Invite users, manage staff accounts, and assign custom roles"},
+
+            {"category": "Settings", "code": "settings.view", "description": "View system settings"},
+            {"category": "Settings", "code": "settings.manage", "description": "Manage system settings and configurations"},
+            {"category": "Staff", "code": "staff.view", "description": "View staff profiles"},
+            {"category": "Staff", "code": "staff.manage", "description": "Manage staff accounts and permissions"},
+            {"category": "Roles", "code": "roles.view", "description": "View roles and permissions"},
+            {"category": "Roles", "code": "roles.manage", "description": "Manage roles and permission assignments"},
+            {"category": "Dashboard", "code": "dashboard.view", "description": "View main dashboard"},
+            {"category": "Audit", "code": "audit.view", "description": "View audit logs"}
         ]
 
         permission_objs = {}
@@ -77,36 +126,27 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS(f"Successfully seeded {len(permission_objs)} permissions."))
 
+        all_permission_codes = list(permission_objs.keys())
+
         # Global Roles Definition
         ROLES_CATALOG = [
             {
                 "code": "super_admin",
                 "name": "Super Admin",
                 "description": "Full master developer control over all platform modules and tenants.",
-                "permissions": list(permission_objs.keys()) # ALL
+                "permissions": all_permission_codes
             },
             {
                 "code": "owner",
                 "name": "Owner",
                 "description": "Full property group management and operational control.",
-                "permissions": list(permission_objs.keys()) # ALL
+                "permissions": all_permission_codes
             },
             {
                 "code": "general_manager",
                 "name": "General Manager",
                 "description": "Full property local operations management.",
-                "permissions": [
-                    "reservations:view", "reservations:create", "reservations:update", "reservations:cancel", "reservations:checkin", "reservations:checkout",
-                    "inventory:view", "inventory:manage", "inventory:layout", "inventory:status",
-                    "rates:view", "rates:manage", "rates:packages",
-                    "services:view", "services:manage",
-                    "billing:view", "billing:post", "billing:settle", "billing:refund",
-                    "housekeeping:view", "housekeeping:assign", "housekeeping:status", "maintenance:view", "maintenance:manage",
-                    "crm:view", "crm:manage",
-                    "channels:view", "channels:manage",
-                    "reports:view", "reports:export",
-                    "settings:view", "users:view"
-                ]
+                "permissions": all_permission_codes
             },
             {
                 "code": "front_office_manager",
@@ -114,11 +154,12 @@ class Command(BaseCommand):
                 "description": "Front desk oversight, check-ins, check-outs, and guest folios.",
                 "permissions": [
                     "reservations:view", "reservations:create", "reservations:update", "reservations:cancel", "reservations:checkin", "reservations:checkout",
-                    "inventory:view", "inventory:status",
-                    "rates:view", "services:view",
-                    "billing:view", "billing:post", "billing:settle", "billing:refund",
-                    "crm:view", "crm:manage",
-                    "reports:view"
+                    "reservations.view", "reservations.create", "reservations.edit", "reservations.cancel", "reservations.manage",
+                    "inventory:view", "inventory:status", "inventory.view", "rooms.view",
+                    "rates:view", "rates.view", "services:view",
+                    "billing:view", "billing:post", "billing:settle", "billing:refund", "billing.view",
+                    "crm:view", "crm:manage", "guests.view", "guests.edit",
+                    "reports:view", "reports.view"
                 ]
             },
             {
@@ -127,9 +168,10 @@ class Command(BaseCommand):
                 "description": "Front office check-in/check-out transactions and folio billing.",
                 "permissions": [
                     "reservations:view", "reservations:create", "reservations:update", "reservations:checkin", "reservations:checkout",
-                    "inventory:view",
-                    "billing:view", "billing:post", "billing:settle",
-                    "crm:view", "crm:manage"
+                    "reservations.view", "reservations.create", "reservations.edit",
+                    "inventory:view", "inventory.view", "rooms.view",
+                    "billing:view", "billing:post", "billing:settle", "billing.view",
+                    "crm:view", "crm:manage", "guests.view"
                 ]
             },
             {
@@ -137,9 +179,9 @@ class Command(BaseCommand):
                 "name": "Housekeeping Supervisor",
                 "description": "Room status coordination and maintenance task assignment.",
                 "permissions": [
-                    "inventory:view", "inventory:status",
-                    "housekeeping:view", "housekeeping:assign", "housekeeping:status",
-                    "maintenance:view", "maintenance:manage"
+                    "inventory:view", "inventory:status", "inventory.view", "rooms.view",
+                    "housekeeping:view", "housekeeping:assign", "housekeeping:status", "housekeeping.view", "housekeeping.manage",
+                    "maintenance:view", "maintenance:manage", "maintenance.view", "maintenance.manage"
                 ]
             },
             {
@@ -147,9 +189,9 @@ class Command(BaseCommand):
                 "name": "Accounts",
                 "description": "Invoices and balance settlement processing.",
                 "permissions": [
-                    "billing:view", "billing:post", "billing:settle", "billing:refund",
-                    "rates:view", "services:view",
-                    "reports:view", "reports:export"
+                    "billing:view", "billing:post", "billing:settle", "billing:refund", "billing.view", "billing.manage",
+                    "rates:view", "rates.view", "services:view",
+                    "reports:view", "reports:export", "reports.view"
                 ]
             }
         ]
@@ -158,26 +200,31 @@ class Command(BaseCommand):
         role_perm_count = 0
 
         for r_data in ROLES_CATALOG:
-            role, _ = Role.objects.update_or_create(
-                tenant=None, # Global system role
-                code=r_data["code"],
-                defaults={
-                    "name": r_data["name"],
-                    "description": r_data["description"]
-                }
-            )
-            role_count += 1
+            # Seed both global (tenant=None) and existing tenant roles
+            matching_roles = list(Role.objects.filter(code=r_data["code"]))
+            if not any(r.tenant is None for r in matching_roles):
+                global_role, _ = Role.objects.update_or_create(
+                    tenant=None,
+                    code=r_data["code"],
+                    defaults={
+                        "name": r_data["name"],
+                        "description": r_data["description"]
+                    }
+                )
+                matching_roles.append(global_role)
 
-            # Map permissions
-            for p_code in r_data["permissions"]:
-                if p_code in permission_objs:
-                    _, created = RolePermission.objects.get_or_create(
-                        role=role,
-                        permission=permission_objs[p_code]
-                    )
-                    if created:
-                        role_perm_count += 1
+            for role in matching_roles:
+                role_count += 1
+                for p_code in r_data["permissions"]:
+                    if p_code in permission_objs:
+                        _, created = RolePermission.objects.get_or_create(
+                            role=role,
+                            permission=permission_objs[p_code]
+                        )
+                        if created:
+                            role_perm_count += 1
 
         self.stdout.write(self.style.SUCCESS(
-            f"Successfully seeded {role_count} global roles with {role_perm_count} role-permission mappings!"
+            f"Successfully seeded {role_count} roles with {role_perm_count} role-permission mappings!"
         ))
+

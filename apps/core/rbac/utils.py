@@ -8,7 +8,7 @@ def check_user_permission(user, tenant, perm_codes, property_id=None):
     Validates if `user` has any of `perm_codes` under `tenant` (and optional `property_id`).
     
     Order of Evaluation:
-    1. Superuser / Master Platform Staff / Hotel Owner (`is_superuser`, `is_staff`, or `role in ['super_admin', 'owner', 'tenant_admin']`) -> True.
+    1. Superuser / Master Platform Staff (`is_superuser`, `is_staff`, or `role.code == 'super_admin'`) -> True.
     2. User's direct assigned role (`user.role`). Evaluated via database RolePermission records.
     3. `UserAssignment` records. Evaluated via database RolePermission records.
     4. `UserPropertyRole` records. Evaluated via database RolePermission records.
@@ -16,14 +16,13 @@ def check_user_permission(user, tenant, perm_codes, property_id=None):
     if not user or not user.is_authenticated:
         return False
 
-    # 1. Superuser / Master Platform Staff / Hotel Owner Role Bypass
+    # 1. Superuser / Master Platform Staff (SuperAdmin level only)
     if getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False):
         return True
 
     if hasattr(user, 'role') and user.role:
         role_code = getattr(user.role, 'code', '') or (user.role if isinstance(user.role, str) else '')
-        role_code = str(role_code).lower()
-        if role_code in ['super_admin', 'superadmin', 'owner', 'tenant_admin', 'hotel_owner', 'admin']:
+        if str(role_code).lower() in ['super_admin', 'superadmin']:
             return True
 
     if isinstance(perm_codes, str):
@@ -33,7 +32,6 @@ def check_user_permission(user, tenant, perm_codes, property_id=None):
     extended_codes = set(perm_codes)
     extended_codes.add("*:*")
     extended_codes.add("*")
-    
     for pc in perm_codes:
         if "." in pc:
             prefix = pc.split(".")[0]
@@ -67,7 +65,7 @@ def check_user_permission(user, tenant, perm_codes, property_id=None):
     role_obj = None
     if hasattr(user, 'role') and user.role:
         if isinstance(user.role, str):
-            role_obj = Role.objects.filter(Q(code=user.role) | Q(name__iexact=user.role)).filter(Q(tenant=tenant) | Q(tenant__isnull=True)).first()
+            role_obj = Role.objects.filter(Q(code__iexact=user.role) | Q(name__iexact=user.role)).filter(Q(tenant=tenant) | Q(tenant__isnull=True)).first()
         else:
             role_obj = user.role
 
