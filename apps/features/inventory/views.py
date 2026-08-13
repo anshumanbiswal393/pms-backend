@@ -31,14 +31,7 @@ class InventoryUnitCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = InventoryUnitCategorySerializer
     filterset_class = InventoryUnitCategoryFilter
     search_fields = ['code', 'name']
-    
-    def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
-            return [permissions.IsAuthenticated()]
-        user = getattr(self.request, 'user', None)
-        if user and (getattr(user, 'is_superuser', False) or getattr(user, 'role', '') in ['super_admin', 'superadmin']):
-            return [permissions.IsAuthenticated()]
-        return [HasInventoryPermission()]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         tenant = getattr(self.request, 'tenant', None)
