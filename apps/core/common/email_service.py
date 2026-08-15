@@ -16,12 +16,12 @@ class UnifiedMailService:
     @staticmethod
     def _get_property_details(property_obj: Optional[Any] = None, property_id: Optional[str] = None) -> Dict[str, str]:
         info = {
-            "name": "Retrod Hotel & Resort",
+            "name": "Retrod PMS",
             "address": "123 Hospitality Way",
-            "phone": "+91 9876543210",
-            "email": "support@retrodpms.com",
-            "website": "www.retrodpms.com",
-            "logo_url": "",
+            "phone": "+91 8118-031-833",
+            "email": "support@retrodtech.com",
+            "website": "www.retrodtech.com",
+            "logo_url": "https://retrodtech.com/img/retrod_logo_travel_tech.png",
         }
 
         if not property_obj and property_id:
@@ -94,27 +94,103 @@ class UnifiedMailService:
 
         # 1. OTP Verification Email
         if email_type_upper in ["OTP", "OTP_VERIFICATION"]:
-            otp_code = data.get("otp_code") or data.get("code") or "123456"
-            expiry = data.get("expiry_minutes") or "5"
-            body_content = f"""
-            <div style="padding: 28px; font-family: sans-serif; color: #1e293b;">
-                <h2 style="font-size: 18px; color: #0f172a; margin-top: 0;">Security Verification Code</h2>
-                <p style="font-size: 14px; line-height: 1.5; color: #334155;">
-                    Hello <strong>{recipient_name or 'User'}</strong>,
-                </p>
-                <p style="font-size: 14px; line-height: 1.5; color: #334155;">
-                    Please use the following 6-digit One-Time Password (OTP) to complete your verification:
-                </p>
-                <div style="margin: 24px 0; text-align: center;">
-                    <span style="display: inline-block; background-color: #f0fdf4; border: 2px dashed #16a34a; border-radius: 8px; padding: 14px 28px; font-size: 32px; font-weight: 800; font-family: monospace; letter-spacing: 8px; color: #15803d;">
-                        {otp_code}
-                    </span>
-                </div>
-                <p style="font-size: 13px; color: #64748b; background-color: #f8fafc; border-left: 3px solid #0d5c46; padding: 10px 14px; border-radius: 4px;">
-                    🔒 <strong>Security Warning:</strong> This OTP is valid for <strong>{expiry} minutes</strong>. Do not share this code with anyone.
-                </p>
-            </div>
-            """
+            otp_code = str(data.get("otp_code") or data.get("code") or "123456")
+            expiry = data.get("expiry_minutes") or "10"
+            
+            # Build separated box layout for OTP numbers
+            otp_boxes_html = ""
+            for i, digit in enumerate(otp_code):
+                border_right = "border-right:1px solid #ffedd5;" if i < len(otp_code) - 1 else ""
+                otp_boxes_html += f"""<td width="16%" align="center" style="font-size:28px;font-weight:700;color:#ea580c;font-family:sans-serif;padding:8px 0;{border_right}">{digit}</td>"""
+                
+            return f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:20px;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+        <tr>
+            <td align="center">
+                <table role="presentation" style="width:100%;max-width:600px;background-color:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);" cellspacing="0" cellpadding="0" border="0">
+                    
+                    <!-- Icon & Title -->
+                    <tr>
+                        <td align="center" style="padding:24px 20px 8px 20px;">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto 12px auto;">
+                                <tr>
+                                    <td align="center" valign="middle" style="background-color:#fff7ed;width:64px;height:64px;border-radius:50%;border:1px solid #ffedd5;">
+                                        <!-- Using image to guarantee exact rendering in all email clients -->
+                                        <img src="https://img.icons8.com/ios-filled/50/ea580c/secured-letter.png" alt="Secure Mail" width="32" height="32" style="display:block; border:none;" />
+                                    </td>
+                                </tr>
+                            </table>
+                            <h2 style="margin:0;font-size:24px;color:#0f172a;font-weight:700;font-family:sans-serif;">Your <span style="color:#ea580c;">OTP</span> Code</h2>
+                            <p style="margin:6px 0 0 0;color:#64748b;font-size:14px;font-family:sans-serif;">Use the OTP below to verify your request.</p>
+                        </td>
+                    </tr>
+
+                    <!-- OTP Box Layout (Exact Match) -->
+                    <tr>
+                        <td align="center" style="padding:12px 40px;">
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #ffedd5;border-radius:8px;background-color:#ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                                <tr>
+                                    {otp_boxes_html}
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Info Area -->
+                    <tr>
+                        <td align="center" style="padding:4px 40px 20px 40px;">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                                <tr>
+                                    <td valign="middle" style="padding-right:8px;">
+                                        <img src="https://img.icons8.com/ios-filled/50/ea580c/clock--v1.png" alt="Clock" width="18" height="18" style="display:block;border:none;" />
+                                    </td>
+                                    <td style="color:#64748b;font-size:13px;font-family:sans-serif;">Valid for <strong style="color:#ea580c;font-size:13px;">{expiry} minutes</strong></td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background-color:#0f172a;border-top:4px solid #ea580c;padding:20px;border-bottom-left-radius:12px;border-bottom-right-radius:12px;">
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                                <tr>
+                                     <td align="center" style="color:#ffffff;font-size:12px;font-family:sans-serif;">
+                                        <span style="display:inline-block;margin:5px 15px;white-space:nowrap;">
+                                            <img src="https://img.icons8.com/ios-filled/50/ea580c/phone.png" width="14" height="14" style="vertical-align:middle;margin-right:5px;border:none;"/>
+                                            <a href="tel:{prop_info.get('phone', '+91-8118-031-833')}" style="color:#ffffff;text-decoration:none;vertical-align:middle;">{prop_info.get("phone", "+91-8118-031-833")}</a>
+                                        </span>
+                                        <span style="display:inline-block;margin:5px 15px;white-space:nowrap;">
+                                            <img src="https://img.icons8.com/ios-filled/50/ea580c/new-post.png" width="14" height="14" style="vertical-align:middle;margin-right:5px;border:none;"/>
+                                            <a href="mailto:{prop_info.get('email', 'support@retrodtech.com')}" style="color:#ffffff;text-decoration:none;vertical-align:middle;">{prop_info.get("email", "support@retrodtech.com")}</a>
+                                        </span>
+                                        <span style="display:inline-block;margin:5px 15px;white-space:nowrap;">
+                                            <img src="https://img.icons8.com/ios-filled/50/ea580c/domain.png" width="14" height="14" style="vertical-align:middle;margin-right:5px;border:none;"/>
+                                            <a href="https://{prop_info.get('website', 'retrodtech.com').replace('https://', '').replace('http://', '')}" target="_blank" style="color:#ffffff;text-decoration:none;vertical-align:middle;">{prop_info.get("website") or "retrodtech.com"}</a>
+                                        </span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td align="center" style="padding-top: 20px; color:#64748b; font-size:10px; font-family:sans-serif;">
+                                        &copy; 2026 Retrod Technologies. All rights reserved.
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
 
         # 2. Reservation Confirmation Email
         elif email_type_upper in ["RESERVATION", "RESERVATION_CONFIRMATION", "BOOKING_CONFIRMATION"]:
@@ -385,8 +461,7 @@ class UnifiedMailService:
         if not subject:
             email_type_upper = email_type.upper()
             if email_type_upper in ["OTP", "OTP_VERIFICATION"]:
-                code = data.get("otp_code") or data.get("code") or ""
-                subject = f"Your OTP Verification Code: {code} - {hotel_name}"
+                subject = f"Your Verification Code - {hotel_name}"
             elif email_type_upper in ["RESERVATION", "RESERVATION_CONFIRMATION", "BOOKING_CONFIRMATION"]:
                 resv_id = data.get("reservation_id") or data.get("booking_code") or "RES"
                 subject = f"Booking Confirmation #{resv_id} - {hotel_name}"
@@ -427,19 +502,28 @@ class UnifiedMailService:
                 to=[recipient_email]
             )
             msg.attach_alternative(html_body, "text/html")
-            msg.send(fail_silently=False)
+            
+            # Send asynchronously to make the response instant
+            import threading
+            def send_async():
+                try:
+                    msg.send(fail_silently=False)
+                    logger.info(f"[UnifiedMailService] Async send successful to {recipient_email}")
+                except Exception as e:
+                    logger.error(f"[UnifiedMailService] Async SMTP exception for {recipient_email}: {e}")
+
+            threading.Thread(target=send_async).start()
 
             return {
                 "success": True,
-                "message": f"Email '{email_type}' dispatched successfully to {recipient_email}.",
+                "message": f"Email '{email_type}' dispatch queued successfully to {recipient_email}.",
                 "subject": subject
             }
         except Exception as e:
-            logger.error(f"[UnifiedMailService] SMTP dispatch exception for {recipient_email}: {e}")
-            # Non-blocking fallback success log so dev server or missing SMTP settings won't crash user workflow
+            logger.error(f"[UnifiedMailService] Email build exception for {recipient_email}: {e}")
             return {
                 "success": True,
-                "message": f"Email '{email_type}' logged locally (SMTP fallback: {str(e)})",
+                "message": f"Email '{email_type}' logged locally (build fallback: {str(e)})",
                 "subject": subject,
                 "local_fallback": True
             }
