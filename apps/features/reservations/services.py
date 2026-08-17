@@ -55,7 +55,7 @@ def make_serializable(data):
 
 def calculate_item_tax(tenant, item_price, per_night_tariff=None, guests_count=1):
     """
-    Calculates tax by dynamically inspecting DB SystemTax rules (min_tariff, max_tariff, calculation_base, flat_amount)
+    Calculates tax by dynamically inspecting DB SystemTax rules (min_tariff, max_tariff, calculation_base, flat_amount, rate)
     without any hardcoded rates or thresholds. Returns tuple of (applicable_tax, tax_label).
     """
     from apps.core.common.models import SystemTax
@@ -63,9 +63,10 @@ def calculate_item_tax(tenant, item_price, per_night_tariff=None, guests_count=1
     
     active_rates = SystemTax.objects.filter(
         Q(tenant=tenant) | Q(tenant__isnull=True),
-        status='active'
+        status__iexact='active'
     )
-    tariff = per_night_tariff if per_night_tariff is not None else item_price
+    tariff = Decimal(str(per_night_tariff)) if per_night_tariff is not None else Decimal(str(item_price))
+    item_amt = Decimal(str(item_price))
     
     applicable_tax = Decimal('0.00')
     tax_names = []
@@ -77,14 +78,23 @@ def calculate_item_tax(tenant, item_price, per_night_tariff=None, guests_count=1
         if rate_obj.max_tariff is not None and rate_obj.max_tariff > Decimal('0.00') and tariff > rate_obj.max_tariff:
             continue
 
-        base = rate_obj.calculation_base or 'folio_subtotal'
-        if base in ['per_night', 'flat']:
-            applicable_tax += Decimal(str(rate_obj.flat_amount or '0.00'))
-        elif base == 'per_guest_night':
-            applicable_tax += Decimal(str(rate_obj.flat_amount or '0.00')) * Decimal(str(guests_count))
-        else: # 'room_tariff', 'folio_subtotal', percentage
-            rate_pct = Decimal(str(rate_obj.rate or '0.00'))
-            applicable_tax += item_price * (rate_pct / Decimal('100.0'))
+        base = (rate_obj.calculation_base or 'folio_subtotal').lower()
+        rate_pct = Decimal(str(rate_obj.rate or '0.00'))
+        flat_amt = Decimal(str(rate_obj.flat_amount or '0.00'))
+
+        tax_item = Decimal('0.00')
+        # If rate percentage is specified (e.g. GST 10%, 15%, 5%), compute percentage of item amount
+        if rate_pct > Decimal('0.00'):
+            tax_item += item_amt * (rate_pct / Decimal('100.0'))
+        
+        # If flat fixed amount is specified (e.g. per-night fee or per-guest fee)
+        if flat_amt > Decimal('0.00'):
+            if base == 'per_guest_night':
+                tax_item += flat_amt * Decimal(str(guests_count))
+            else:
+                tax_item += flat_amt
+
+        applicable_tax += tax_item
 
         if rate_obj.name:
             tax_names.append(rate_obj.name)
