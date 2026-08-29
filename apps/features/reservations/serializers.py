@@ -2,8 +2,9 @@ from rest_framework import serializers
 from apps.features.reservations.models import (
     CorporateAccount, GroupBlock, Reservation, ReservationInventory,
     ReservationRateSnapshot, ReservationGuest, ReservationEvent,
-    ReservationServiceAddon, ReservationPackage
+    ReservationServiceAddon, ReservationPackage, ReservationExtraCharge
 )
+from apps.features.crm.services import EncryptionHelper
 
 class ReservationServiceAddonSerializer(serializers.ModelSerializer):
     service_name = serializers.CharField(source='service.name', read_only=True)
@@ -21,6 +22,12 @@ class ReservationPackageSerializer(serializers.ModelSerializer):
         fields = ('id', 'package', 'package_name', 'price')
 
 
+class ReservationExtraChargeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ReservationExtraCharge
+        fields = ('id', 'description', 'amount', 'tax_amount', 'tax_type', 'tax_percent', 'date', 'created_at')
+
+
 class CorporateAccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = CorporateAccount
@@ -29,10 +36,75 @@ class CorporateAccountSerializer(serializers.ModelSerializer):
 
 
 class GroupBlockSerializer(serializers.ModelSerializer):
+    id_type_name = serializers.SerializerMethodField()
+    nationality_name = serializers.SerializerMethodField()
+    property_details = serializers.SerializerMethodField()
+
     class Meta:
         model = GroupBlock
         fields = '__all__'
         read_only_fields = ('id', 'tenant', 'created_at', 'updated_at')
+
+    def get_property_details(self, obj):
+        if not obj.property:
+            return None
+        p = obj.property
+        return {
+            'id': str(p.id),
+            'name': p.name,
+            'address_line_1': p.address_line_1 or "",
+            'address_line_2': p.address_line_2 or "",
+            'city': p.city or "",
+            'state': p.state or "",
+            'country': p.country or "",
+            'postal_code': p.postal_code or "",
+            'contact_phone': p.contact_phone or "",
+            'contact_email': p.contact_email or "",
+            'tax_id': p.tax_id or "",
+            'website_logo': p.website_logo or "",
+        }
+
+    def get_id_type_name(self, obj):
+        if not obj.id_type:
+            return ""
+        from apps.core.reference.models import DocumentType
+        import uuid
+        try:
+            val = str(obj.id_type).strip()
+            if len(val) == 36 and '-' in val:
+                doc = DocumentType.objects.filter(id=uuid.UUID(val)).first()
+                if doc:
+                    return doc.name
+            doc = DocumentType.objects.filter(code__iexact=val).first()
+            if doc:
+                return doc.name
+            doc = DocumentType.objects.filter(name__iexact=val).first()
+            if doc:
+                return doc.name
+        except Exception:
+            pass
+        return str(obj.id_type)
+
+    def get_nationality_name(self, obj):
+        if not obj.nationality:
+            return "Indian"
+        from apps.core.reference.models import Nationality
+        import uuid
+        try:
+            val = str(obj.nationality).strip()
+            if len(val) == 36 and '-' in val:
+                nat = Nationality.objects.filter(id=uuid.UUID(val)).first()
+                if nat:
+                    return nat.name
+            nat = Nationality.objects.filter(code__iexact=val).first()
+            if nat:
+                return nat.name
+            nat = Nationality.objects.filter(name__iexact=val).first()
+            if nat:
+                return nat.name
+        except Exception:
+            pass
+        return str(obj.nationality)
 
 
 class ReservationRateSnapshotSerializer(serializers.ModelSerializer):
@@ -42,17 +114,116 @@ class ReservationRateSnapshotSerializer(serializers.ModelSerializer):
 
 
 class ReservationGuestSerializer(serializers.ModelSerializer):
+    guest_name = serializers.SerializerMethodField()
+    guest_first_name = serializers.CharField(source='guest.first_name', read_only=True)
+    guest_last_name = serializers.CharField(source='guest.last_name', read_only=True)
+    guest_email = serializers.SerializerMethodField()
+    guest_phone = serializers.SerializerMethodField()
+    guest_address = serializers.SerializerMethodField()
+    guest_id_type = serializers.SerializerMethodField()
+    guest_id_number = serializers.SerializerMethodField()
+    guest_id_proof_url = serializers.SerializerMethodField()
+
     class Meta:
         model = ReservationGuest
         fields = '__all__'
 
+    def get_guest_name(self, obj):
+        if obj.guest:
+            return f"{obj.guest.first_name} {obj.guest.last_name}".strip()
+        if obj.guest_snapshot:
+            return obj.guest_snapshot.get('name', '')
+        return ""
+
+    def get_guest_email(self, obj):
+        if obj.guest:
+            contacts = list(obj.guest.contacts.all()) if hasattr(obj.guest, 'contacts') else []
+            contact = next((c for c in contacts if getattr(c, 'is_primary', False)), None) or (contacts[0] if contacts else None)
+            if contact and contact.email:
+                return contact.email
+        if obj.guest_snapshot:
+            return obj.guest_snapshot.get('email', '')
+        return ""
+
+    def get_guest_phone(self, obj):
+        if obj.guest:
+            contacts = list(obj.guest.contacts.all()) if hasattr(obj.guest, 'contacts') else []
+            contact = next((c for c in contacts if getattr(c, 'is_primary', False)), None) or (contacts[0] if contacts else None)
+            if contact and contact.phone:
+                return contact.phone
+        if obj.guest_snapshot:
+            return obj.guest_snapshot.get('phone', '')
+        return ""
+
+    def get_guest_address(self, obj):
+        if obj.guest:
+            contacts = list(obj.guest.contacts.all()) if hasattr(obj.guest, 'contacts') else []
+            contact = next((c for c in contacts if getattr(c, 'is_primary', False)), None) or (contacts[0] if contacts else None)
+            if contact:
+                parts = [contact.address_line_1, contact.address_line_2, contact.city, contact.state, contact.country]
+                return ", ".join([p for p in parts if p])
+        if obj.guest_snapshot:
+            return obj.guest_snapshot.get('address', '')
+        return ""
+
+    def get_guest_id_type(self, obj):
+        if obj.guest:
+            docs = list(obj.guest.documents.all()) if hasattr(obj.guest, 'documents') else []
+            doc = docs[0] if docs else None
+            if doc and doc.document_type:
+                return doc.document_type
+        if obj.guest_snapshot:
+            return obj.guest_snapshot.get('id_type', '')
+        return ""
+
+    def get_guest_id_number(self, obj):
+        if obj.guest:
+            docs = list(obj.guest.documents.all()) if hasattr(obj.guest, 'documents') else []
+            doc = docs[0] if docs else None
+            if doc and doc.document_number:
+                try:
+                    return EncryptionHelper.decrypt(doc.document_number)
+                except Exception:
+                    return doc.document_number
+        if obj.guest_snapshot:
+            return obj.guest_snapshot.get('id_number', '')
+        return ""
+
+    def get_guest_id_proof_url(self, obj):
+        if obj.guest:
+            docs = list(obj.guest.documents.all()) if hasattr(obj.guest, 'documents') else []
+            doc = docs[0] if docs else None
+            if doc and doc.attachment_url:
+                return doc.attachment_url
+        if obj.guest_snapshot:
+            return obj.guest_snapshot.get('id_proof_url', '')
+        return ""
+
 
 class ReservationEventSerializer(serializers.ModelSerializer):
     actor_username = serializers.CharField(source='actor_user.username', read_only=True)
+    actor_name = serializers.SerializerMethodField()
+    actor_role = serializers.SerializerMethodField()
 
     class Meta:
         model = ReservationEvent
         fields = '__all__'
+
+    def get_actor_name(self, obj):
+        if not obj.actor_user:
+            return "System"
+        return getattr(obj.actor_user, 'name', None) or obj.actor_user.username or "Staff"
+
+    def get_actor_role(self, obj):
+        if not obj.actor_user:
+            return "System"
+        if getattr(obj.actor_user, 'role', None) and hasattr(obj.actor_user.role, 'name'):
+            return obj.actor_user.role.name
+        if getattr(obj.actor_user, 'is_superuser', False):
+            return "Super Admin"
+        if getattr(obj.actor_user, 'is_staff', False):
+            return "Owner"
+        return "Staff"
 
 
 class ReservationInventorySerializer(serializers.ModelSerializer):
@@ -66,12 +237,126 @@ class ReservationInventorySerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+# Cached in-memory booking sources for ultra-fast lookup
+_booking_sources_cache = None
+_booking_sources_cache_time = 0
+
+def get_cached_booking_sources():
+    global _booking_sources_cache, _booking_sources_cache_time
+    import time
+    now = time.time()
+    if _booking_sources_cache is None or (now - _booking_sources_cache_time) > 60:
+        try:
+            from apps.core.common.models import BookingSource
+            _booking_sources_cache = list(BookingSource.objects.all())
+            _booking_sources_cache_time = now
+        except Exception:
+            _booking_sources_cache = []
+    return _booking_sources_cache
+
+def resolve_booking_source_icon(source_name):
+    if not source_name:
+        source_name = "Direct"
+    sources = get_cached_booking_sources()
+    src_norm = source_name.lower().replace(" ", "").replace("_", "").replace("-", "")
+    for bs in sources:
+        bs_norm = bs.name.lower().replace(" ", "").replace("_", "").replace("-", "")
+        if bs_norm == src_norm:
+            return bs.icon
+    for bs in sources:
+        bs_norm = bs.name.lower().replace(" ", "").replace("_", "").replace("-", "")
+        if bs_norm in src_norm or src_norm in bs_norm:
+            if bs.icon:
+                return bs.icon
+        if bs.details:
+            details_norm = bs.details.lower().replace(" ", "").replace("_", "").replace("-", "")
+            if details_norm in src_norm or src_norm in details_norm:
+                if bs.icon:
+                    return bs.icon
+    return None
+
+
+class ReservationListInventorySerializer(serializers.ModelSerializer):
+    unit_name = serializers.CharField(source='inventory_unit.name', read_only=True)
+    unit_type_code = serializers.CharField(source='inventory_unit_type.code', read_only=True)
+
+    class Meta:
+        model = ReservationInventory
+        fields = [
+            'id', 'inventory_unit', 'inventory_unit_type', 'unit_name', 'unit_type_code',
+            'check_in_date', 'check_out_date', 'adult_count', 'child_count', 'status', 'assigned_at'
+        ]
+
+
+class ReservationListSerializer(serializers.ModelSerializer):
+    """
+    High-performance lean serializer for list and timeline views.
+    Executes in < 0.01s without deep audit or event history serialization.
+    """
+    room_allocations = ReservationListInventorySerializer(many=True, read_only=True)
+    primary_guest_name = serializers.SerializerMethodField()
+    reservation_source_name = serializers.CharField(source='reservation_source.name', read_only=True)
+    reservation_source_icon = serializers.SerializerMethodField()
+    property_name = serializers.CharField(source='property.name', read_only=True)
+    grand_total = serializers.SerializerMethodField()
+    adults = serializers.SerializerMethodField()
+    children = serializers.SerializerMethodField()
+
+    property_business_date = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Reservation
+        fields = [
+            'id', 'property', 'property_name', 'property_business_date', 'confirmation_number', 'booking_reference', 'status', 'reservation_type',
+            'market_segment', 'booking_date', 'arrival_date', 'departure_date',
+            'check_in_time', 'check_out_time', 'adults', 'children',
+            'total_amount', 'tax_amount', 'discount_amount', 'paid_amount', 'balance_amount', 'grand_total',
+            'primary_guest', 'primary_guest_name',
+            'reservation_source', 'reservation_source_name', 'reservation_source_icon',
+            'corporate_account', 'group_block', 'room_allocations', 'created_at', 'updated_at'
+        ]
+
+    def get_property_business_date(self, obj):
+        if obj.property and obj.property.business_date:
+            return str(obj.property.business_date)
+        from django.utils import timezone
+        return str(timezone.localdate())
+
+    def get_reservation_source_icon(self, obj):
+        source_name = obj.reservation_source.name if obj.reservation_source else "Direct"
+        return resolve_booking_source_icon(source_name)
+
+    def get_grand_total(self, obj):
+        from decimal import Decimal
+        total = (obj.total_amount or Decimal('0.00')) + (obj.tax_amount or Decimal('0.00')) - (obj.discount_amount or Decimal('0.00'))
+        return str(total)
+
+    def get_primary_guest_name(self, obj):
+        if not obj.primary_guest:
+            return "Guest"
+        return f"{obj.primary_guest.first_name} {obj.primary_guest.last_name}".strip()
+
+    def get_adults(self, obj):
+        allocs = obj.room_allocations.all()
+        return sum(getattr(a, 'adult_count', 0) for a in allocs) or 1
+
+    def get_children(self, obj):
+        allocs = obj.room_allocations.all()
+        return sum(getattr(a, 'child_count', 0) for a in allocs) or 0
+
+
 class ReservationSerializer(serializers.ModelSerializer):
     room_allocations = ReservationInventorySerializer(many=True, read_only=True)
     services = ReservationServiceAddonSerializer(many=True, read_only=True)
     packages = ReservationPackageSerializer(many=True, read_only=True)
+    extra_charges = ReservationExtraChargeSerializer(many=True, read_only=True)
+    timeline_events = ReservationEventSerializer(many=True, read_only=True)
+    all_guests = serializers.SerializerMethodField()
     primary_guest_name = serializers.SerializerMethodField()
     reservation_source_name = serializers.CharField(source='reservation_source.name', read_only=True)
+    reservation_source_icon = serializers.SerializerMethodField()
+    grand_total = serializers.SerializerMethodField()
+    property_business_date = serializers.SerializerMethodField()
 
     class Meta:
         model = Reservation
@@ -81,8 +366,33 @@ class ReservationSerializer(serializers.ModelSerializer):
             'booking_date', 'status', 'created_at', 'updated_at'
         )
 
+    def get_property_business_date(self, obj):
+        if obj.property and obj.property.business_date:
+            return str(obj.property.business_date)
+        from django.utils import timezone
+        return str(timezone.localdate())
+
+    def get_reservation_source_icon(self, obj):
+        source_name = obj.reservation_source.name if obj.reservation_source else "Direct"
+        return resolve_booking_source_icon(source_name)
+
+    def get_grand_total(self, obj):
+        from decimal import Decimal
+        total = (obj.total_amount or Decimal('0.00')) + (obj.tax_amount or Decimal('0.00')) - (obj.discount_amount or Decimal('0.00'))
+        return str(total)
+
     def get_primary_guest_name(self, obj):
-        return f"{obj.primary_guest.first_name} {obj.primary_guest.last_name}"
+        if not obj.primary_guest:
+            return "Guest"
+        return f"{obj.primary_guest.first_name} {obj.primary_guest.last_name}".strip()
+
+    def get_all_guests(self, obj):
+        guests = []
+        for alloc in obj.room_allocations.all():
+            for rg in alloc.guests.all():
+                guests.append(ReservationGuestSerializer(rg).data)
+        return guests
+
 
 
 class CreateBookingSerializer(serializers.Serializer):

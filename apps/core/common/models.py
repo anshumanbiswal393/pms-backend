@@ -258,3 +258,40 @@ class TenantPaymentGateway(models.Model):
     def __str__(self):
         return f"{self.tenant} - {self.gateway.name} ({'Enabled' if self.is_enabled else 'Disabled'})"
 
+
+class SystemNotification(BaseModel):
+    CATEGORY_CHOICES = (
+        ('RESERVATION', 'Reservation'),
+        ('OTA', 'OTA Booking'),
+        ('GUEST_REQUEST', 'Guest Request'),
+        ('HOUSEKEEPING', 'Housekeeping'),
+        ('CHECKIN', 'Check-In'),
+        ('CHECKOUT', 'Check-Out'),
+        ('SYSTEM', 'System Alert'),
+    )
+
+    LEVEL_CHOICES = (
+        ('info', 'Info'),
+        ('success', 'Success'),
+        ('warning', 'Warning'),
+        ('urgent', 'Urgent'),
+    )
+
+    tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, related_name='system_notifications', null=True, blank=True)
+    property = models.ForeignKey('tenants.Property', on_delete=models.CASCADE, related_name='system_notifications', null=True, blank=True)
+    category = models.CharField(max_length=64, choices=CATEGORY_CHOICES, default="RESERVATION")
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    level = models.CharField(max_length=32, choices=LEVEL_CHOICES, default="info")
+    link_url = models.CharField(max_length=255, null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'system_notifications'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"[{self.category}] {self.title} ({'Read' if self.is_read else 'Unread'})"
+

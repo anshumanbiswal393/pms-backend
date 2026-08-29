@@ -77,7 +77,9 @@ class AppUserSerializer(serializers.ModelSerializer):
 
         if assigned_prop_ids is not None and user.tenant:
             from apps.core.tenants.models import Property
+            from apps.core.rbac.models import UserPropertyRole
             UserAssignment.objects.filter(user=user).delete()
+            UserPropertyRole.objects.filter(user=user).delete()
             for pid in assigned_prop_ids:
                 prop_obj = Property.objects.filter(id=pid, tenant=user.tenant).first()
                 if prop_obj:
@@ -87,6 +89,13 @@ class AppUserSerializer(serializers.ModelSerializer):
                         property=prop_obj,
                         role=user.role
                     )
+                    if user.role:
+                        UserPropertyRole.objects.create(
+                            user=user,
+                            tenant=user.tenant,
+                            property=prop_obj,
+                            role=user.role
+                        )
         return user
 
     def update(self, instance, validated_data):
@@ -100,7 +109,9 @@ class AppUserSerializer(serializers.ModelSerializer):
 
         if assigned_prop_ids is not None and instance.tenant:
             from apps.core.tenants.models import Property
+            from apps.core.rbac.models import UserPropertyRole
             UserAssignment.objects.filter(user=instance).delete()
+            UserPropertyRole.objects.filter(user=instance).delete()
             for pid in assigned_prop_ids:
                 prop_obj = Property.objects.filter(id=pid, tenant=instance.tenant).first()
                 if prop_obj:
@@ -110,6 +121,13 @@ class AppUserSerializer(serializers.ModelSerializer):
                         property=prop_obj,
                         role=instance.role
                     )
+                    if instance.role:
+                        UserPropertyRole.objects.create(
+                            user=instance,
+                            tenant=instance.tenant,
+                            property=prop_obj,
+                            role=instance.role
+                        )
         return instance
 
 class PlatformUserSerializer(serializers.ModelSerializer):
@@ -122,27 +140,8 @@ class PlatformUserSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
 
-class AppUserCreateSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, required=False)
-
-    class Meta:
-        model = AppUser
-        fields = (
-            'id', 'tenant', 'name', 'username', 'email', 'phone', 
-            'avatar_url', 'preferred_language', 'preferred_timezone', 
-            'is_active', 'password'
-        )
-        read_only_fields = ('id',)
-
-    def create(self, validated_data):
-        password = validated_data.pop('password', None)
-        email = validated_data.pop('email', None)
-        user = AppUser.objects.create_user(
-            email=email,
-            password=password,
-            **validated_data
-        )
-        return user
+class AppUserCreateSerializer(AppUserSerializer):
+    pass
 
 class PasswordLoginRequestSerializer(serializers.Serializer):
     email_or_username = serializers.CharField(required=True, help_text="Email or Username of staff member")

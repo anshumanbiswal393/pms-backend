@@ -313,38 +313,65 @@ class AuthService:
         property_roles = UserPropertyRole.objects.filter(user=user, tenant=tenant) if tenant else []
         properties = []
         permissions = set()
+        user_role = None
+        user_role_name = None
         
         for pr in property_roles:
             properties.append({
                 'id': str(pr.property.id),
                 'name': pr.property.name,
-                'role': pr.role.code
+                'role': pr.role.code,
+                'role_name': pr.role.name
             })
+            if not user_role and pr.role:
+                user_role = pr.role.code
+                user_role_name = pr.role.name
             # Add role permissions
             for rp in pr.role.permissions.all():
+                permissions.add(rp.permission.code)
+
+        # Resolve direct user.role permissions
+        if getattr(user, 'role', None):
+            user_role = user.role.code
+            user_role_name = user.role.name
+            for rp in user.role.permissions.all():
                 permissions.add(rp.permission.code)
 
         # Resolve tenant-wide assignment role and permissions (e.g. for owner onboarding)
         from apps.core.accounts.models import UserAssignment
         assignment = UserAssignment.objects.filter(user=user, tenant=tenant).first() if tenant else None
-        user_role = assignment.role.code if (assignment and assignment.role) else None
-
         if assignment and assignment.role:
+            user_role = assignment.role.code
+            user_role_name = assignment.role.name
             for rp in assignment.role.permissions.all():
                 permissions.add(rp.permission.code)
 
-        # Include superuser properties bypass if relevant
+        # Determine exact role classification
         if user.is_superuser:
             user_role = 'super_admin'
-            permissions.add("*:*")  # Wildcard system permission
-            if tenant:
-                from apps.core.tenants.models import Property
-                for p in Property.objects.filter(tenant=tenant):
-                    properties.append({
-                        'id': str(p.id),
-                        'name': p.name,
-                        'role': 'super_admin'
-                    })
+            user_role_name = 'Retrod Super Admin'
+            permissions.add("*:*")
+        elif tenant and getattr(tenant, 'owner', None) == user:
+            user_role = 'owner'
+            user_role_name = 'Owner'
+            permissions.add("*:*")
+        elif user_role in ['owner', 'tenant_owner']:
+            user_role = 'owner'
+            user_role_name = 'Owner'
+            permissions.add("*:*")
+        elif not user_role:
+            user_role = 'owner' if (tenant and not property_roles) else 'staff'
+            user_role_name = 'Owner' if (tenant and not property_roles) else 'Staff'
+
+        if user_role == 'owner' and tenant and not properties:
+            from apps.core.tenants.models import Property
+            for p in Property.objects.filter(tenant=tenant):
+                properties.append({
+                    'id': str(p.id),
+                    'name': p.name,
+                    'role': 'owner',
+                    'role_name': 'Owner'
+                })
 
         # Fetch subscription plan details
         from apps.core.subscriptions.models import TenantSubscription, TenantProductLicense
@@ -369,6 +396,7 @@ class AuthService:
                 'preferred_language': user.preferred_language,
                 'preferred_timezone': user.preferred_timezone,
                 'role': user_role,
+                'role_name': user_role_name or user_role,
                 'is_superuser': user.is_superuser,
                 'tenant_subdomain': user.tenant.subdomain if user.tenant else None,
                 'subscription_plan': sub_plan,

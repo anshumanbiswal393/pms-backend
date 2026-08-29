@@ -236,8 +236,13 @@ class AmenityViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
-            return Amenity.objects.filter(tenant__isnull=True)
-        return Amenity.objects.filter(Q(tenant__isnull=True) | Q(tenant=tenant))
+            qs = Amenity.objects.filter(tenant__isnull=True)
+        else:
+            qs = Amenity.objects.filter(Q(tenant__isnull=True) | Q(tenant=tenant))
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(Q(name__icontains=search) | Q(code__icontains=search) | Q(category__icontains=search) | Q(description__icontains=search))
+        return qs.order_by('name')
 
 
 class InventoryMediaViewSet(viewsets.ModelViewSet):

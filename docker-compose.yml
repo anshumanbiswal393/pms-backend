@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -21,6 +21,8 @@ services:
     restart: unless-stopped
     volumes:
       - redis_data:/data
+    ports:
+      - "6379:6379"
 
   backend:
     build:
@@ -37,6 +39,18 @@ services:
       - media_data:/app/media
     ports:
       - "8000:8000"
+
+  celery_worker:
+    build:
+      context: .
+    command: celery -A retrod_pms worker -l info --pool=prefork
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - backend
+      - redis
+
 
   frontend:
     build:

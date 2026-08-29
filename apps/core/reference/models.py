@@ -119,3 +119,33 @@ class PaymentMode(BaseModel):
         return f"{self.name} ({self.code})"
 
 
+class Venue(BaseModel):
+    code = models.CharField(max_length=64, unique=True, db_index=True)
+    name = models.CharField(max_length=120)
+    capacity = models.IntegerField(default=50, null=True, blank=True)
+    description = models.TextField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name_plural = "Venues"
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.name} ({self.capacity} pax)" if self.capacity else self.name
+
+
+class EventType(BaseModel):
+    code = models.CharField(max_length=64, unique=True, db_index=True)
+    name = models.CharField(max_length=120)
+    description = models.TextField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name_plural = "Event Types"
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+

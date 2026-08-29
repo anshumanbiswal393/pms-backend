@@ -172,7 +172,12 @@ class GroupBlock(BaseModel):
     payment_remark = models.CharField(max_length=255, default="", blank=True)
     id_type = models.CharField(max_length=64, default="", blank=True)
     id_number = models.CharField(max_length=64, default="", blank=True)
+    nationality = models.CharField(max_length=64, default="Indian", blank=True)
     address = models.TextField(default="", blank=True)
+    meal_plan = models.CharField(max_length=64, default="AP Plan", blank=True)
+    meal_plan_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    extra_charges = models.JSONField(default=list, blank=True)
+    payment_history = models.JSONField(default=list, blank=True)
 
     class Meta:
         constraints = [

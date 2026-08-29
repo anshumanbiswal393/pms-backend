@@ -14,6 +14,8 @@ from apps.features.inventory.models import InventoryUnit, InventoryUnitType
 from apps.features.rates.models import RatePlan, RatePlanVersion, Service, HospitalityPackage, Coupon, MealPlan, TenantMealPlanPrice
 
 from apps.core.common.redis_lock import redis_distributed_lock
+from apps.features.reservations.email_service import send_reservation_confirmation_email_async
+from apps.core.common.notification_service import NotificationService
 
 def check_room_availability(tenant, room, check_in_date, check_out_date, exclude_allocation_id=None):
     """
@@ -214,14 +216,52 @@ class BookingEngine:
         
         # Resolve Reservation Source
         res_source_id = booking_data.get('reservation_source_id')
-        if not res_source_id:
-            from apps.core.reference.models import ReservationSource
-            source_name = booking_data.get('source') or 'Direct'
-            source_obj = ReservationSource.objects.filter(tenant=tenant, name__iexact=source_name).first()
+        from apps.core.reference.models import ReservationSource
+        from apps.core.common.models import BookingSource
+        source_name = booking_data.get('source') or booking_data.get('reservation_source_name')
+
+        source_obj = None
+        if res_source_id:
+            source_obj = ReservationSource.objects.filter(id=res_source_id).first()
             if not source_obj:
-                source_obj = ReservationSource.objects.filter(tenant=tenant).first()
-            if source_obj:
-                res_source_id = source_obj.id
+                bs = BookingSource.objects.filter(id=res_source_id).first()
+                if bs:
+                    code = bs.name.lower().replace(" ", "_").replace("-", "_")[:64]
+                    source_obj, _ = ReservationSource.objects.get_or_create(
+                        code=code,
+                        defaults={'name': bs.name, 'is_active': bs.is_active}
+                    )
+        
+        if not source_obj and source_name:
+            bs = BookingSource.objects.filter(name__iexact=source_name).first()
+            if bs:
+                code = bs.name.lower().replace(" ", "_").replace("-", "_")[:64]
+                source_obj, _ = ReservationSource.objects.get_or_create(
+                    code=code,
+                    defaults={'name': bs.name, 'is_active': bs.is_active}
+                )
+            else:
+                source_obj = (
+                    ReservationSource.objects.filter(name__iexact=source_name).first()
+                    or ReservationSource.objects.filter(code__iexact=source_name.lower().replace(" ", "_")).first()
+                    or ReservationSource.objects.filter(name__icontains=source_name).first()
+                )
+                if not source_obj:
+                    code = source_name.lower().replace(" ", "_").replace("-", "_")[:64]
+                    source_obj, _ = ReservationSource.objects.get_or_create(
+                        code=code,
+                        defaults={'name': source_name, 'is_active': True}
+                    )
+
+        if not source_obj:
+            source_obj = (
+                ReservationSource.objects.filter(code='direct').first()
+                or ReservationSource.objects.filter(name__icontains='direct').first()
+                or ReservationSource.objects.first()
+            )
+
+        if source_obj:
+            res_source_id = source_obj.id
 
         # Verify Corporate Account if provided
         corp_account = None
@@ -517,6 +557,34 @@ class BookingEngine:
             payload_diff=make_serializable(model_to_dict(reservation, exclude=['created_at', 'updated_at', 'deleted_at']))
         )
 
+        # 1. Asynchronously send Confirmation Email with PDF Invoice attachment to guest
+        send_reservation_confirmation_email_async(reservation.id)
+
+        # 2. Trigger Real-time System Notification for New Reservation / OTA
+        try:
+            source_name = reservation.reservation_source.name if reservation.reservation_source else "Direct"
+            is_ota = any(ota_kw in source_name.upper() for ota_kw in ['OTA', 'BOOKING.COM', 'EXPEDIA', 'AGODA', 'AIRBNB', 'MMT', 'GOIBIBO'])
+            category = 'OTA' if is_ota else 'RESERVATION'
+            title = f"New OTA Booking: {source_name} ({conf_no})" if is_ota else f"New Reservation: {conf_no}"
+            
+            guest_name_str = f"{primary_guest.first_name} {primary_guest.last_name}".strip() if primary_guest else "Guest"
+            arr_date_str = reservation.arrival_date.strftime('%d %b') if reservation.arrival_date else ''
+            dep_date_str = reservation.departure_date.strftime('%d %b') if reservation.departure_date else ''
+            
+            NotificationService.send_notification(
+                tenant=tenant,
+                property_obj=property_obj,
+                category=category,
+                title=title,
+                message=f"{guest_name_str} booked for {arr_date_str} - {dep_date_str}. Total: ₹{net_payable:,.2f}",
+                level="success",
+                link_url=f"/reservations/{reservation.id}",
+                metadata={"reservation_id": str(reservation.id), "confirmation_number": conf_no, "source": source_name},
+                actor_user=user
+            )
+        except Exception as e:
+            pass
+
         return reservation
 
 
@@ -641,6 +709,8 @@ class RoomAssignmentEngine:
 
         old_room_name = allocation.inventory_unit.name if allocation.inventory_unit else "Unassigned"
         allocation.inventory_unit = new_room
+        if new_room.inventory_unit_type:
+            allocation.inventory_unit_type = new_room.inventory_unit_type
         if new_check_in_date:
             allocation.check_in_date = new_check_in_date
         if new_check_out_date:
@@ -710,6 +780,25 @@ class CheckInCheckOutEngine:
             description="Reservation successfully checked in.",
             actor_user=user
         )
+
+        # Trigger System Notification for Check-in
+        try:
+            primary_guest_name = f"{reservation.primary_guest.first_name} {reservation.primary_guest.last_name}".strip() if reservation.primary_guest else "Guest"
+            assigned_rooms = ", ".join([a.inventory_unit.name for a in reservation.room_allocations.all() if a.inventory_unit]) or "Room"
+            NotificationService.send_notification(
+                tenant=tenant,
+                property_obj=reservation.property,
+                category="CHECKIN",
+                title=f"Guest Checked In: {primary_guest_name}",
+                message=f"Reservation {reservation.confirmation_number} checked into Room {assigned_rooms}.",
+                level="success",
+                link_url=f"/reservations/{reservation.id}",
+                metadata={"reservation_id": str(reservation.id), "confirmation_number": reservation.confirmation_number},
+                actor_user=user
+            )
+        except Exception as e:
+            pass
+
         return reservation
 
     @staticmethod
@@ -763,6 +852,25 @@ class CheckInCheckOutEngine:
             description="Reservation successfully checked out.",
             actor_user=user
         )
+
+        # Trigger System Notification for Check-out
+        try:
+            primary_guest_name = f"{reservation.primary_guest.first_name} {reservation.primary_guest.last_name}".strip() if reservation.primary_guest else "Guest"
+            assigned_rooms = ", ".join([a.inventory_unit.name for a in reservation.room_allocations.all() if a.inventory_unit]) or "Room"
+            NotificationService.send_notification(
+                tenant=tenant,
+                property_obj=reservation.property,
+                category="CHECKOUT",
+                title=f"Guest Checked Out: {primary_guest_name}",
+                message=f"Reservation {reservation.confirmation_number} checked out from Room {assigned_rooms}. Room marked dirty for cleaning.",
+                level="info",
+                link_url=f"/reservations/{reservation.id}",
+                metadata={"reservation_id": str(reservation.id), "confirmation_number": reservation.confirmation_number},
+                actor_user=user
+            )
+        except Exception as e:
+            pass
+
         return reservation
 
     @staticmethod
@@ -771,6 +879,16 @@ class CheckInCheckOutEngine:
         reservation = Reservation.objects.get(id=reservation_id, tenant=tenant)
         if reservation.status != 'CHECKED_IN':
             raise ValidationError("Reservation must be checked in to undo check-in.")
+
+        # Same-day validation: only allow undo check-in on the same operational business date
+        current_bdate = reservation.property.business_date if (reservation.property and reservation.property.business_date) else timezone.localdate()
+        checkin_event = reservation.timeline_events.filter(event_type='CHECKED_IN').order_by('-created_at').first()
+        checkin_date = checkin_event.created_at.date() if checkin_event else reservation.arrival_date
+
+        if current_bdate > checkin_date:
+            raise ValidationError(
+                f"Cannot undo check-in. Check-in was completed on {checkin_date}, which is prior to current business date {current_bdate}. Undo check-in is only permitted on the same operational date."
+            )
 
         reservation.status = 'CONFIRMED'
         reservation.save(update_fields=['status'])
@@ -799,6 +917,16 @@ class CheckInCheckOutEngine:
         reservation = Reservation.objects.get(id=reservation_id, tenant=tenant)
         if reservation.status != 'CHECKED_OUT':
             raise ValidationError("Reservation must be checked out to undo check-out.")
+
+        # Same-day validation: only allow undo check-out on the same operational business date
+        current_bdate = reservation.property.business_date if (reservation.property and reservation.property.business_date) else timezone.localdate()
+        checkout_event = reservation.timeline_events.filter(event_type='CHECKED_OUT').order_by('-created_at').first()
+        checkout_date = checkout_event.created_at.date() if checkout_event else reservation.departure_date
+
+        if current_bdate > checkout_date:
+            raise ValidationError(
+                f"Cannot undo check-out. Check-out was completed on {checkout_date}, which is prior to current business date {current_bdate}. Undo check-out is only permitted on the same operational date."
+            )
 
         reservation.status = 'CHECKED_IN'
         reservation.save(update_fields=['status'])

@@ -1,3 +1,6 @@
+from decimal import Decimal
+from django.db import models
+from django.utils import timezone
 from rest_framework import viewsets, status, permissions, serializers
 from rest_framework.response import Response
 from rest_framework.decorators import action
@@ -7,13 +10,13 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 
 from apps.features.reservations.models import (
     CorporateAccount, GroupBlock, Reservation, ReservationInventory,
-    ReservationEvent
+    ReservationEvent, ReservationExtraCharge, ReservationGuest
 )
 from apps.features.availability.models import WaitlistEntry
 from apps.features.reservations.serializers import (
     CorporateAccountSerializer, GroupBlockSerializer, ReservationSerializer,
+    ReservationListSerializer,
     ReservationEventSerializer, CreateBookingSerializer, AssignRoomSerializer,
-    ModifyRemarksSerializer, CancelReservationSerializer,
     ModifyRemarksSerializer, CancelReservationSerializer,
     SplitReservationSerializer, MergeReservationSerializer,
     RoomUpgradeSerializer, RoomChangeSerializer, PriceEstimationSerializer,
@@ -51,10 +54,56 @@ class GroupBlockViewSet(viewsets.ModelViewSet):
         if not tenant:
             return GroupBlock.objects.none()
         qs = GroupBlock.objects.filter(tenant=tenant)
-        property_id = self.request.query_params.get('property_id')
+        property_id = self.request.query_params.get('property_id') or self.request.query_params.get('property')
         if property_id:
             qs = qs.filter(property_id=property_id)
-        return qs
+
+        # Search filter
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(name__icontains=search) |
+                Q(code__icontains=search) |
+                Q(contact_name__icontains=search) |
+                Q(contact_phone__icontains=search) |
+                Q(contact_email__icontains=search) |
+                Q(meal_plan__icontains=search) |
+                Q(status__icontains=search) |
+                Q(block_type__icontains=search)
+            )
+
+        # Status filter
+        status_val = self.request.query_params.get('status')
+        if status_val and status_val != 'All':
+            qs = qs.filter(status__iexact=status_val)
+
+        # Manager filter
+        manager = self.request.query_params.get('manager') or self.request.query_params.get('contact_name')
+        if manager and manager != 'All':
+            qs = qs.filter(contact_name__iexact=manager)
+
+        # Meal Plan filter
+        meal_plan = self.request.query_params.get('meal_plan')
+        if meal_plan and meal_plan != 'All':
+            qs = qs.filter(meal_plan__iexact=meal_plan)
+
+        # Date range filters (From & To)
+        from_date = self.request.query_params.get('from_date') or self.request.query_params.get('start_date')
+        if from_date:
+            from django.db.models import Q
+            qs = qs.filter(Q(end_date__gte=from_date) | Q(start_date__gte=from_date))
+
+        to_date = self.request.query_params.get('to_date') or self.request.query_params.get('end_date')
+        if to_date:
+            qs = qs.filter(start_date__lte=to_date)
+
+        # Exclude conference block if requested
+        block_type = self.request.query_params.get('block_type')
+        if block_type:
+            qs = qs.filter(block_type=block_type)
+
+        return qs.order_by('-created_at')
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, 'tenant', None)
@@ -75,28 +124,56 @@ class ReservationViewSet(viewsets.ModelViewSet):
     serializer_class = ReservationSerializer
     permission_classes = [HasReservationPermission]
 
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return ReservationListSerializer
+        return ReservationSerializer
+
     def get_queryset(self):
-        tenant = getattr(self.request, 'tenant', None)
+        user = self.request.user
+        tenant = getattr(user, 'tenant', None) or getattr(self.request, 'tenant', None)
         if not tenant:
             return Reservation.objects.none()
             
-        qs = Reservation.objects.filter(tenant=tenant).select_related(
-            'primary_guest',
-            'reservation_source',
-            'corporate_account',
-            'group_block'
-        ).prefetch_related(
-            'room_allocations__inventory_unit',
-            'room_allocations__inventory_unit_type',
-            'room_allocations__rate_snapshots',
-            'room_allocations__guests'
-        )
+        if self.action == 'list':
+            qs = Reservation.objects.filter(tenant=tenant).select_related(
+                'primary_guest',
+                'property',
+                'reservation_source'
+            ).prefetch_related(
+                'room_allocations__inventory_unit',
+                'room_allocations__inventory_unit_type'
+            )
+        else:
+            qs = Reservation.objects.filter(tenant=tenant).select_related(
+                'primary_guest',
+                'property',
+                'reservation_source',
+                'corporate_account',
+                'group_block'
+            ).prefetch_related(
+                'room_allocations__inventory_unit',
+                'room_allocations__inventory_unit_type',
+                'room_allocations__rate_snapshots',
+                'room_allocations__guests__guest__contacts',
+                'room_allocations__guests__guest__documents',
+                'services',
+                'packages',
+                'extra_charges',
+                'timeline_events__actor_user'
+            )
+
+        # Property context filtering
+        property_id = self.request.headers.get('X-Property-ID') or (getattr(self.request, 'query_params', {}).get('property_id') if hasattr(self.request, 'query_params') else None)
+        if property_id:
+            qs = qs.filter(property_id=property_id)
         
         # Filter by active window if start_date and end_date are provided
         from django.utils.dateparse import parse_date
         from django.db.models import Q
-        start_date_str = self.request.query_params.get('start_date')
-        end_date_str = self.request.query_params.get('end_date')
+        q_params = getattr(self.request, 'query_params', getattr(self.request, 'GET', {}))
+        start_date_str = q_params.get('start_date')
+        end_date_str = q_params.get('end_date')
         
         if start_date_str and end_date_str:
             start_date = parse_date(start_date_str)
@@ -362,6 +439,253 @@ class ReservationViewSet(viewsets.ModelViewSet):
         events = ReservationEvent.objects.filter(tenant=tenant, reservation=reservation).order_by('timestamp')
         serializer = ReservationEventSerializer(events, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='add-guest')
+    def add_guest(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+        alloc = reservation.room_allocations.first()
+        if not alloc:
+            return Response({'error': 'No room allocation found on this reservation.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        full_name = request.data.get('fullName') or request.data.get('name') or ''
+        parts = full_name.strip().split(' ', 1)
+        first_name = parts[0] if parts else 'Guest'
+        last_name = parts[1] if len(parts) > 1 else ''
+        email = request.data.get('email', '').strip()
+        phone = request.data.get('phone', '').strip()
+        address = request.data.get('address', '').strip()
+        id_type = request.data.get('idType') or request.data.get('id_type') or 'NATIONAL_ID'
+        id_number = request.data.get('idNumber') or request.data.get('id_number') or ''
+        id_proof = request.data.get('idProof') or request.data.get('id_proof') or ''
+
+        from apps.features.crm.models import GuestProfile, GuestContact, GuestDocument
+        from apps.features.crm.services import EncryptionHelper
+
+        guest = None
+        if email or phone:
+            contact = GuestContact.objects.filter(tenant=tenant).filter(
+                models.Q(email=email) if email else models.Q(phone=phone)
+            ).first()
+            if contact:
+                guest = contact.guest
+
+        if not guest:
+            guest = GuestProfile.objects.create(
+                tenant=tenant,
+                first_name=first_name,
+                last_name=last_name or '.',
+                guest_type='DOMESTIC'
+            )
+            if email or phone:
+                GuestContact.objects.create(
+                    tenant=tenant,
+                    guest=guest,
+                    email=email or f"guest_{guest.id}@example.com",
+                    phone=phone or '0000000000',
+                    address_line_1=address or '',
+                    is_primary=True
+                )
+            if id_number:
+                doc_type_clean = id_type.upper().replace(' ', '_')
+                if doc_type_clean not in ['PASSPORT', 'NATIONAL_ID', 'DRIVING_LICENCE']:
+                    doc_type_clean = 'NATIONAL_ID'
+                GuestDocument.objects.create(
+                    tenant=tenant,
+                    guest=guest,
+                    document_type=doc_type_clean,
+                    document_number=EncryptionHelper.encrypt(id_number),
+                    attachment_url=id_proof or ''
+                )
+        else:
+            if address:
+                c = guest.contacts.filter(is_primary=True).first()
+                if c:
+                    c.address_line_1 = address
+                    c.save(update_fields=['address_line_1'])
+            if id_number:
+                doc_type_clean = id_type.upper().replace(' ', '_')
+                if doc_type_clean not in ['PASSPORT', 'NATIONAL_ID', 'DRIVING_LICENCE']:
+                    doc_type_clean = 'NATIONAL_ID'
+                d = guest.documents.first()
+                if d:
+                    d.document_type = doc_type_clean
+                    d.document_number = EncryptionHelper.encrypt(id_number)
+                    if id_proof:
+                        d.attachment_url = id_proof
+                    d.save()
+                else:
+                    GuestDocument.objects.create(
+                        tenant=tenant,
+                        guest=guest,
+                        document_type=doc_type_clean,
+                        document_number=EncryptionHelper.encrypt(id_number),
+                        attachment_url=id_proof or ''
+                    )
+
+        ReservationGuest.objects.create(
+            tenant=tenant,
+            reservation_inventory=alloc,
+            guest=guest,
+            is_primary=False,
+            guest_snapshot={
+                'name': f"{first_name} {last_name}".strip(),
+                'email': email,
+                'phone': phone,
+                'address': address,
+                'id_type': id_type,
+                'id_number': id_number,
+                'id_proof_url': id_proof or '',
+            }
+        )
+
+        ReservationEvent.objects.create(
+            tenant=tenant,
+            reservation=reservation,
+            event_type='GUEST_ADDED',
+            description=f"Additional Guest {first_name} {last_name} added to reservation.",
+            actor_user=request.user
+        )
+
+        return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='remove-guest')
+    def remove_guest(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+        guest_id = request.data.get('guest_id') or request.data.get('reservation_guest_id')
+
+        rg = ReservationGuest.objects.filter(
+            tenant=tenant,
+            reservation_inventory__reservation=reservation
+        ).filter(models.Q(id=guest_id) | models.Q(guest_id=guest_id)).first()
+
+        if rg:
+            g_name = f"{rg.guest.first_name} {rg.guest.last_name}" if rg.guest else "Guest"
+            rg.delete()
+            ReservationEvent.objects.create(
+                tenant=tenant,
+                reservation=reservation,
+                event_type='GUEST_REMOVED',
+                description=f"Guest {g_name} removed from reservation.",
+                actor_user=request.user
+            )
+
+        return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='add-charge')
+    def add_charge(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+
+        description = request.data.get('description') or 'Room Service'
+        amount_raw = Decimal(str(request.data.get('amount', 0)))
+        tax_type = request.data.get('taxType') or request.data.get('tax_type') or 'Excluded'
+        tax_percent = Decimal(str(request.data.get('taxPercent') or request.data.get('tax_percent') or 0))
+        date_val = request.data.get('date')
+
+        if tax_type == 'Excluded':
+            tax_amount = amount_raw * (tax_percent / Decimal('100.0'))
+            base_amount = amount_raw
+        else:
+            tax_amount = amount_raw - (amount_raw / (Decimal('1.0') + tax_percent / Decimal('100.0')))
+            base_amount = amount_raw - tax_amount
+
+        ReservationExtraCharge.objects.create(
+            tenant=tenant,
+            reservation=reservation,
+            description=description,
+            amount=base_amount,
+            tax_amount=tax_amount,
+            tax_type=tax_type,
+            tax_percent=tax_percent,
+            date=date_val if date_val else timezone.now().date()
+        )
+
+        reservation.total_amount = reservation.total_amount + base_amount
+        reservation.tax_amount = reservation.tax_amount + tax_amount
+        gross_total = (reservation.total_amount + reservation.tax_amount) - reservation.discount_amount
+        reservation.balance_amount = max(Decimal('0.00'), gross_total - reservation.paid_amount)
+        reservation.save()
+
+        ReservationEvent.objects.create(
+            tenant=tenant,
+            reservation=reservation,
+            event_type='CHARGE_POSTED',
+            description=f"Folio charge '{description}' for ₹{amount_raw} added.",
+            actor_user=request.user
+        )
+
+        return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='remove-charge')
+    def remove_charge(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+        charge_id = request.data.get('charge_id')
+
+        charge = ReservationExtraCharge.objects.filter(tenant=tenant, reservation=reservation, id=charge_id).first()
+        if charge:
+            c_desc = charge.description
+            c_amt = charge.amount
+            c_tax = charge.tax_amount
+            charge.delete()
+
+            reservation.total_amount = max(Decimal('0.00'), reservation.total_amount - c_amt)
+            reservation.tax_amount = max(Decimal('0.00'), reservation.tax_amount - c_tax)
+            gross_total = (reservation.total_amount + reservation.tax_amount) - reservation.discount_amount
+            reservation.balance_amount = max(Decimal('0.00'), gross_total - reservation.paid_amount)
+            reservation.save()
+
+            ReservationEvent.objects.create(
+                tenant=tenant,
+                reservation=reservation,
+                event_type='CHARGE_REMOVED',
+                description=f"Folio charge '{c_desc}' removed.",
+                actor_user=request.user
+            )
+
+        return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='record-payment')
+    def record_payment(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+
+        amount = Decimal(str(request.data.get('amount', 0)))
+        method = request.data.get('method') or request.data.get('payment_method') or 'Cash'
+        pay_type = request.data.get('type') or 'Payment'
+
+        if amount > Decimal('0.00'):
+            reservation.paid_amount = reservation.paid_amount + amount
+            gross_total = (reservation.total_amount + reservation.tax_amount) - reservation.discount_amount
+            reservation.balance_amount = max(Decimal('0.00'), gross_total - reservation.paid_amount)
+            reservation.save()
+
+            ReservationEvent.objects.create(
+                tenant=tenant,
+                reservation=reservation,
+                event_type='PAYMENT_RECEIVED',
+                description=f"{pay_type} of ₹{amount} received via {method}.",
+                actor_user=request.user
+            )
+
+        return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
 
     @extend_schema(request=None, responses={200: ReservationSerializer})
     @action(detail=True, methods=['post'], url_path='reinstate')

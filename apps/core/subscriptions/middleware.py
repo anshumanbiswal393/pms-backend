@@ -16,10 +16,14 @@ class ProductAccessMiddleware(MiddlewareMixin):
             '/admin/',
             '/api/schema/',
             '/api/superadmin/',
+            '/api/v1/integrations/',
+            '/api/chatbot/',
+            '/api/integrations/',
             '/favicon.ico',
         ]
         if any(path.startswith(bp) for bp in bypass_paths):
             return None
+
 
         # Resolve user from request or JWT Bearer header
         user = getattr(request, 'user', None)

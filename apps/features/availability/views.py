@@ -229,7 +229,53 @@ class GroupBlockViewSet(viewsets.ModelViewSet):
         property_id = self.request.query_params.get('property_id') or self.request.query_params.get('property')
         if property_id:
             qs = qs.filter(property_id=property_id)
-        return qs
+
+        # Search filter
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(name__icontains=search) |
+                Q(code__icontains=search) |
+                Q(contact_name__icontains=search) |
+                Q(contact_phone__icontains=search) |
+                Q(contact_email__icontains=search) |
+                Q(meal_plan__icontains=search) |
+                Q(status__icontains=search) |
+                Q(block_type__icontains=search)
+            )
+
+        # Status filter
+        status_val = self.request.query_params.get('status')
+        if status_val and status_val != 'All':
+            qs = qs.filter(status__iexact=status_val)
+
+        # Manager filter
+        manager = self.request.query_params.get('manager') or self.request.query_params.get('contact_name')
+        if manager and manager != 'All':
+            qs = qs.filter(contact_name__iexact=manager)
+
+        # Meal Plan filter
+        meal_plan = self.request.query_params.get('meal_plan')
+        if meal_plan and meal_plan != 'All':
+            qs = qs.filter(meal_plan__iexact=meal_plan)
+
+        # Date range filters (From & To)
+        from_date = self.request.query_params.get('from_date') or self.request.query_params.get('start_date')
+        if from_date:
+            from django.db.models import Q
+            qs = qs.filter(Q(end_date__gte=from_date) | Q(start_date__gte=from_date))
+
+        to_date = self.request.query_params.get('to_date') or self.request.query_params.get('end_date')
+        if to_date:
+            qs = qs.filter(start_date__lte=to_date)
+
+        # Exclude conference block if requested
+        block_type = self.request.query_params.get('block_type')
+        if block_type:
+            qs = qs.filter(block_type=block_type)
+
+        return qs.order_by('-created_at')
 
     @action(detail=True, methods=['post'], url_path='release')
     def release_block(self, request, pk=None):

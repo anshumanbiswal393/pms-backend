@@ -53,7 +53,7 @@ class HasInventoryPermission(permissions.BasePermission):
 
 class IsAmenityManager(HasInventoryPermission):
     def get_required_permission(self, request, view):
-        return 'amenity.manage'
+        return ['amenity.manage', 'inventory.manage', 'rooms.manage', 'settings.manage', 'settings.view']
 
 
 class IsAttributeManager(HasInventoryPermission):

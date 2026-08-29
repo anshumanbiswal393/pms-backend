@@ -14,6 +14,7 @@ from apps.features.housekeeping.serializers import (
     TurndownServiceSerializer, MinibarInventorySerializer, MinibarRefillSerializer,
     AmenityInventorySerializer, HousekeepingInventorySerializer
 )
+from apps.core.common.notification_service import NotificationService
 
 class HousekeepingBaseViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
@@ -26,7 +27,8 @@ class HousekeepingBaseViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, 'tenant', None)
-        serializer.save(tenant=tenant)
+        instance = serializer.save(tenant=tenant)
+        return instance
 
 
 class CleaningTaskViewSet(HousekeepingBaseViewSet):
@@ -118,10 +120,45 @@ class CleaningTaskViewSet(HousekeepingBaseViewSet):
             "created_tasks": created_tasks
         }, status=status.HTTP_200_OK)
 
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        try:
+            room_name = instance.room.name if instance.room else "Room"
+            NotificationService.send_notification(
+                tenant=instance.tenant,
+                property_obj=getattr(instance.room, 'property', None),
+                category="HOUSEKEEPING",
+                title=f"Housekeeping: Room {room_name} ({instance.status})",
+                message=f"Cleaning task for Room {room_name} updated to {instance.status} with priority {instance.priority}.",
+                level="info" if instance.status != 'COMPLETED' else "success",
+                link_url="/housekeeping",
+                metadata={"room_id": str(instance.room.id) if instance.room else "", "status": instance.status}
+            )
+        except Exception:
+            pass
+
 
 class RoomInspectionViewSet(HousekeepingBaseViewSet):
     queryset = RoomInspection.objects.all()
     serializer_class = RoomInspectionSerializer
+
+    def perform_create(self, serializer):
+        instance = super().perform_create(serializer)
+        try:
+            room_name = instance.room.name if instance.room else "Room"
+            NotificationService.send_notification(
+                tenant=instance.tenant,
+                property_obj=getattr(instance.room, 'property', None),
+                category="HOUSEKEEPING",
+                title=f"Room Inspection: Room {room_name} ({instance.result})",
+                message=f"Inspection completed with score {instance.score}/100. Result: {instance.result}.",
+                level="success" if instance.result == 'PASSED' else "warning",
+                link_url="/housekeeping",
+                metadata={"room_id": str(instance.room.id) if instance.room else "", "result": instance.result}
+            )
+        except Exception:
+            pass
+        return instance
 
 
 class DeepCleaningScheduleViewSet(HousekeepingBaseViewSet):

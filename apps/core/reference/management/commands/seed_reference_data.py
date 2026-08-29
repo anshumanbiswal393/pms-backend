@@ -101,6 +101,8 @@ class Command(BaseCommand):
         sources = [
             {"code": "direct", "name": "Direct / Walk-In"},
             {"code": "website", "name": "Brand Website"},
+            {"code": "makemytrip", "name": "MakeMyTrip"},
+            {"code": "goibibo", "name": "Goibibo"},
             {"code": "booking_com", "name": "Booking.com"},
             {"code": "expedia", "name": "Expedia"},
             {"code": "agoda", "name": "Agoda"},

@@ -1,6 +1,7 @@
 import uuid
 import random
 from django.db import models
+from django.utils.timezone import now as django_now
 from apps.core.common.models import BaseModel
 
 def generate_hotel_id():
@@ -85,6 +86,9 @@ class Property(BaseModel):
     luxury_tax = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
     
     amenities = models.JSONField(default=list, blank=True)
+    business_date = models.DateField(default=django_now, null=True, blank=True)
+    subscription_end_date = models.DateField(null=True, blank=True)
+    booking_engine_settings = models.JSONField(default=dict, blank=True)
 
     def save(self, *args, **kwargs):
         if not self.hotel_id:
@@ -93,7 +97,24 @@ class Property(BaseModel):
                 if not Property.objects.filter(hotel_id=candidate).exists():
                     self.hotel_id = candidate
                     break
+
+        # Automatically ensure slug is set in booking_engine_settings
+        import re
+        settings_dict = self.booking_engine_settings or {}
+        if not settings_dict.get('slug'):
+            auto_slug = re.sub(r'[^a-z0-9]+', '-', self.name.lower()).strip('-')
+            settings_dict['slug'] = auto_slug or f"hotel-{self.hotel_id or 'retrod'}"
+            self.booking_engine_settings = settings_dict
+
         super().save(*args, **kwargs)
+
+        # Trigger real-time sync to Booking Engine
+        try:
+            from apps.booking.sync import sync_pms_property_to_booking_engine
+            sync_pms_property_to_booking_engine(self)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Booking engine real-time sync notice for {self.name}: {e}")
 
     def __str__(self):
         return f"{self.name} ({self.hotel_id}) - {self.tenant.name}"

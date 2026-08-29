@@ -138,7 +138,8 @@ class SuperadminPropertySerializer(serializers.ModelSerializer):
             'description', 'star_rating', 'website', 'check_in_time', 'check_out_time',
             'min_age', 'pets_allowed', 'tax_id', 'google_map_url', 'cancellation_policy',
             'refund_policy', 'house_rules', 'cgst', 'vat', 'city_tax', 'service_charge',
-            'luxury_tax', 'amenities', 'website_logo', 'kot_logo', 'photos'
+            'luxury_tax', 'amenities', 'website_logo', 'kot_logo', 'photos',
+            'subscription_end_date', 'booking_engine_settings'
         ]
 
 

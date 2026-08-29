@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 from django.core.exceptions import ValidationError
 from apps.core.common.models import BaseModel, BaseManager, BaseQuerySet
 from apps.core.tenants.models import Tenant, Property
@@ -303,4 +304,19 @@ class ReservationCoupon(BaseModel):
 
     def __str__(self):
         return f"{self.reservation.confirmation_number} -> Coupon {self.coupon.code}"
+
+
+class ReservationExtraCharge(BaseModel):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='reservation_extra_charges')
+    reservation = models.ForeignKey(Reservation, on_delete=models.CASCADE, related_name='extra_charges')
+    description = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    tax_type = models.CharField(max_length=32, default="Excluded")
+    tax_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
+    date = models.DateField(default=timezone.now)
+
+    def __str__(self):
+        return f"{self.description}: {self.amount} on {self.reservation.confirmation_number}"
+
 

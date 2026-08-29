@@ -41,18 +41,30 @@ class SuperadminPropertyViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         user = self.request.user if self.request.user.is_authenticated else None
-        tenant = serializer.save(created_by=user)
+        prop = serializer.save(created_by=user)
+        try:
+            from apps.booking.sync import sync_pms_property_to_booking_engine
+            sync_pms_property_to_booking_engine(prop)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to sync property to booking engine on create: {e}")
         try:
             from apps.core.subscriptions.services import ProductAccessService
-            ProductAccessService.provision_tenant_products(tenant, created_by=user)
+            ProductAccessService.provision_tenant_products(prop, created_by=user)
         except Exception as e:
             import logging
             logging.getLogger(__name__).error(f"Failed to auto-provision tenant products: {e}")
 
     def perform_update(self, serializer):
-        serializer.save(
+        prop = serializer.save(
             updated_by=self.request.user if self.request.user.is_authenticated else None
         )
+        try:
+            from apps.booking.sync import sync_pms_property_to_booking_engine
+            sync_pms_property_to_booking_engine(prop)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to sync property to booking engine on update: {e}")
 
     @action(detail=False, methods=['post'], url_path='upload-image')
     def upload_image(self, request):
@@ -85,24 +97,30 @@ class PropertyViewSet(viewsets.ModelViewSet):
     serializer_class = PropertySerializer
     
     def get_queryset(self):
-        tenant = getattr(self.request, 'tenant', None)
+        user = self.request.user
+        tenant = getattr(user, 'tenant', None) or getattr(self.request, 'tenant', None)
         if not tenant:
             return Property.objects.none()
         
-        user = self.request.user
         if not user or not user.is_authenticated:
             return Property.objects.filter(tenant=tenant)
 
-        # Tenant Owner / Superuser bypass
+        # Superuser bypass: allow viewing specific tenant or all if explicitly requested
+        if user.is_superuser:
+            tenant_param = self.request.query_params.get('tenant') or self.request.headers.get('X-Tenant-ID')
+            if tenant_param:
+                return Property.objects.filter(tenant_id=tenant_param)
+            return Property.objects.filter(tenant=tenant)
+
+        # Tenant Owner / Director / Admin - strictly isolated to their own tenant
         is_owner = (
-            user.is_superuser or
             user.is_staff or
             (user.role and user.role.code in ['owner', 'tenant_owner', 'admin', 'super_admin'])
         )
         if is_owner:
             return Property.objects.filter(tenant=tenant)
 
-        # Filter assigned properties for staff users
+        # Filter assigned properties for staff users within their tenant
         from apps.core.accounts.models import UserAssignment
         from apps.core.rbac.models import UserPropertyRole
 
@@ -125,6 +143,12 @@ class PropertyViewSet(viewsets.ModelViewSet):
             tenant=tenant,
             created_by=self.request.user if self.request.user.is_authenticated else None
         )
+        try:
+            from apps.booking.sync import sync_pms_property_to_booking_engine
+            sync_pms_property_to_booking_engine(property_obj)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to sync property to booking engine on create: {e}")
         # Automatically assign the creator to the new property as owner
         if self.request.user and self.request.user.is_authenticated:
             from apps.core.rbac.models import Role, UserPropertyRole
@@ -138,9 +162,15 @@ class PropertyViewSet(viewsets.ModelViewSet):
                 )
         
     def perform_update(self, serializer):
-        serializer.save(
+        property_obj = serializer.save(
             updated_by=self.request.user if self.request.user.is_authenticated else None
         )
+        try:
+            from apps.booking.sync import sync_pms_property_to_booking_engine
+            sync_pms_property_to_booking_engine(property_obj)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to sync property to booking engine on update: {e}")
 
     @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def upload_photo(self, request):

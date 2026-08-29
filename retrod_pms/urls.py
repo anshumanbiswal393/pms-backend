@@ -40,6 +40,7 @@ from apps.core.common.views import (
     BookingSourceViewSet, PaymentGatewayViewSet, TenantPaymentGatewayViewSet,
     UnifiedSendEmailView
 )
+from apps.core.common.notification_views import SystemNotificationViewSet
 from apps.core.common.razorpay_views import CreateRazorpayOrderView, VerifyRazorpaySignatureView
 
 # Initialize DRF Router
@@ -98,6 +99,7 @@ router.register(r'superadmin-departments', DepartmentViewSet, basename='superadm
 router.register(r'superadmin-shifts', ShiftViewSet, basename='superadminshifts')
 router.register(r'superadmin-occupancy-types', OccupancyTypeViewSet, basename='superadminoccupancytypes')
 router.register(r'superadmin-booking-sources', BookingSourceViewSet, basename='superadminbookingsources')
+router.register(r'notifications', SystemNotificationViewSet, basename='notifications')
 
 from django.http import JsonResponse
 
@@ -107,6 +109,9 @@ def home_status_view(request):
 urlpatterns = [
     path('', home_status_view, name='home_status'),
     path('admin/', admin.site.urls),
+    
+    # Unified Booking Engine Endpoints (Product 3)
+    path('api/v1/', include('apps.booking.urls')),
     
     # Base Viewsets
     path('api/', include(router.urls)),
@@ -136,6 +141,10 @@ urlpatterns = [
     path('api/common/send-email/', UnifiedSendEmailView.as_view(), name='unified_send_email'),
     path('api/send-email/', UnifiedSendEmailView.as_view(), name='unified_send_email_alias'),
 
+    # Front Office & Night Audit Endpoints
+    path('api/front-office/', include('apps.features.front_office.urls')),
+    path('api/night-audit/', include('apps.features.front_office.urls')),
+
     # Reservation Domain Endpoints
     path('api/reservations/', include('apps.features.reservations.urls')),
 
@@ -160,8 +169,14 @@ urlpatterns = [
     # Compliance & Governance Endpoints
     path('api/compliance/', include('apps.core.compliance.urls')),
 
+    # AI Chatbot & WhatsApp Integration Endpoints (Product 3)
+    path('api/v1/integrations/', include('apps.chatbot.integrations.urls')),
+    path('api/chatbot/', include('apps.chatbot.integrations.urls')),
+    path('api/integrations/', include('apps.chatbot.integrations.urls')),
+
     # Monitoring & Administration Endpoints
     path('api/admin/', include('apps.core.monitoring.urls')),
+
     path('api/dashboard-stats/', DashboardStatsView.as_view(), name='dashboard_stats'),
     
     # Custom Auth Endpoints

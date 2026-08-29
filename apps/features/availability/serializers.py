@@ -162,11 +162,75 @@ class GroupBlockAllocationSerializer(serializers.ModelSerializer):
 
 class GroupBlockSerializer(serializers.ModelSerializer):
     allocations = GroupBlockAllocationSerializer(many=True, read_only=True)
+    id_type_name = serializers.SerializerMethodField()
+    nationality_name = serializers.SerializerMethodField()
+    property_details = serializers.SerializerMethodField()
 
     class Meta:
         model = GroupBlock
         fields = '__all__'
         read_only_fields = ('id', 'tenant', 'created_at', 'updated_at', 'created_by', 'updated_by', 'deleted_at')
+
+    def get_property_details(self, obj):
+        if not obj.property:
+            return None
+        p = obj.property
+        return {
+            'id': str(p.id),
+            'name': p.name,
+            'address_line_1': p.address_line_1 or "",
+            'address_line_2': p.address_line_2 or "",
+            'city': p.city or "",
+            'state': p.state or "",
+            'country': p.country or "",
+            'postal_code': p.postal_code or "",
+            'contact_phone': p.contact_phone or "",
+            'contact_email': p.contact_email or "",
+            'tax_id': p.tax_id or "",
+            'website_logo': p.website_logo or "",
+        }
+
+    def get_id_type_name(self, obj):
+        if not obj.id_type:
+            return ""
+        from apps.core.reference.models import DocumentType
+        import uuid
+        try:
+            val = str(obj.id_type).strip()
+            if len(val) == 36 and '-' in val:
+                doc = DocumentType.objects.filter(id=uuid.UUID(val)).first()
+                if doc:
+                    return doc.name
+            doc = DocumentType.objects.filter(code__iexact=val).first()
+            if doc:
+                return doc.name
+            doc = DocumentType.objects.filter(name__iexact=val).first()
+            if doc:
+                return doc.name
+        except Exception:
+            pass
+        return str(obj.id_type)
+
+    def get_nationality_name(self, obj):
+        if not obj.nationality:
+            return "Indian"
+        from apps.core.reference.models import Nationality
+        import uuid
+        try:
+            val = str(obj.nationality).strip()
+            if len(val) == 36 and '-' in val:
+                nat = Nationality.objects.filter(id=uuid.UUID(val)).first()
+                if nat:
+                    return nat.name
+            nat = Nationality.objects.filter(code__iexact=val).first()
+            if nat:
+                return nat.name
+            nat = Nationality.objects.filter(name__iexact=val).first()
+            if nat:
+                return nat.name
+        except Exception:
+            pass
+        return str(obj.nationality)
 
     def validate(self, data):
         request = self.context.get('request')

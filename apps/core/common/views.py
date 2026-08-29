@@ -196,6 +196,30 @@ class BookingSourceViewSet(viewsets.ModelViewSet):
     queryset = BookingSource.objects.all()
     permission_classes = [permissions.IsAuthenticated]
 
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        try:
+            from apps.core.reference.models import ReservationSource
+            code = instance.name.lower().replace(" ", "_").replace("-", "_")[:64]
+            ReservationSource.objects.update_or_create(
+                code=code,
+                defaults={'name': instance.name, 'is_active': instance.is_active}
+            )
+        except Exception:
+            pass
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        try:
+            from apps.core.reference.models import ReservationSource
+            code = instance.name.lower().replace(" ", "_").replace("-", "_")[:64]
+            ReservationSource.objects.update_or_create(
+                code=code,
+                defaults={'name': instance.name, 'is_active': instance.is_active}
+            )
+        except Exception:
+            pass
+
 
 class UnifiedSendEmailView(APIView):
     """

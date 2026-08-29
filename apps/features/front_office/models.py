@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -77,9 +78,9 @@ class GuestFolio(BaseModel):
     
     folio_number = models.CharField(max_length=64, unique=True)
     status = models.CharField(max_length=32, choices=STATUS_CHOICES, default='OPEN')
-    total_charges = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
-    total_payments = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
-    balance = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    total_charges = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    total_payments = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
 
     def clean(self):
         if self.reservation and self.reservation.tenant != self.tenant:
@@ -87,6 +88,9 @@ class GuestFolio(BaseModel):
 
     def save(self, *args, **kwargs):
         self.clean()
+        from decimal import Decimal
+        self.total_charges = Decimal(str(self.total_charges or 0.00))
+        self.total_payments = Decimal(str(self.total_payments or 0.00))
         self.balance = self.total_charges - self.total_payments
         super().save(*args, **kwargs)
 
@@ -226,8 +230,10 @@ class HouseAccount(BaseModel):
 class NightAuditSession(BaseModel):
     STATUS_CHOICES = (
         ('PENDING', 'Pending'),
+        ('IN_PROGRESS', 'In Progress'),
         ('COMPLETED', 'Completed'),
         ('FAILED', 'Failed'),
+        ('ROLLED_BACK', 'Rolled Back'),
     )
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='night_audits')
@@ -235,9 +241,40 @@ class NightAuditSession(BaseModel):
     
     audit_date = models.DateField()
     status = models.CharField(max_length=32, choices=STATUS_CHOICES, default='PENDING')
+    started_at = models.DateTimeField(default=timezone.now)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    performed_by = models.ForeignKey('accounts.AppUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='performed_night_audits')
+
+    # Operational metrics
+    rooms_occupied = models.IntegerField(default=0)
+    rooms_total = models.IntegerField(default=0)
+    occupancy_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
+
+    # Postings & Revenue
     total_room_charges_posted = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    total_packages_posted = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     total_tax_posted = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
-    exception_logs = models.JSONField(null=True, blank=True)
+    total_charges_posted = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    total_payments_received = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+
+    # No-Shows
+    no_shows_processed = models.IntegerField(default=0)
+    no_show_revenue = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+
+    # Cashier balances
+    cashier_opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    cashier_closing_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    cashier_variance = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+
+    # Ledgers
+    guest_ledger_closing = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    city_ledger_closing = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    deposit_ledger_closing = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+
+    # Logs & details
+    pre_audit_checklist_results = models.JSONField(null=True, blank=True, default=dict)
+    post_audit_summary = models.JSONField(null=True, blank=True, default=dict)
+    exception_logs = models.JSONField(null=True, blank=True, default=list)
 
     def clean(self):
         if self.property.tenant != self.tenant:

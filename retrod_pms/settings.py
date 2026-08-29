@@ -66,7 +66,16 @@ INSTALLED_APPS = [
     'apps.features.housekeeping',
     'apps.features.billing',
     'apps.features.b2b',
+    
+    # AI Chatbot Apps (Product 2)
+    'apps.chatbot.ai_engine',
+    'apps.chatbot.core',
+    'apps.chatbot.integrations',
+
+    # Booking Engine (Product 3)
+    'apps.booking',
 ]
+
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
@@ -106,7 +115,9 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'retrod_pms.wsgi.application'
 
-# Database configuration (psycopg2 for postgres, sqlite as local/test fallback)
+import sys
+
+# Database configuration (psycopg2 for postgres, sqlite as local fallback)
 if env('DATABASE_URL'):
     DATABASES = {
         'default': env.db()
@@ -118,6 +129,8 @@ else:
             'NAME': BASE_DIR / 'db.sqlite3',
         }
     }
+
+
 
 # Custom Auth Model
 AUTH_USER_MODEL = 'accounts.AppUser'
@@ -184,6 +197,9 @@ CORS_ALLOW_HEADERS = [
     "x-requested-with",
     "x-tenant-subdomain",
     "x-property-id",
+    "x-hotel-slug",
+    "x-hotel-subdomain",
+    "x-tenant-slug",
 ]
 
 
@@ -266,4 +282,58 @@ CACHES = {
         }
     }
 }
+
+# Celery & Async Message Broker
+REDIS_URL = env('REDIS_URL', default='redis://127.0.0.1:6379/1')
+CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://127.0.0.1:6379/0')
+CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default=None)
+CELERY_TASK_IGNORE_RESULT = True
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
+# Structured Logging with PII Redaction Filter
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'filters': {
+        'pii_masking': {
+            '()': 'apps.chatbot.core.logging_filters.PIIMaskingFilter',
+        }
+    },
+    'formatters': {
+        'verbose': {
+            'format': '[{asctime}] [{levelname}] [{name}:{lineno}] {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'filters': ['pii_masking'],
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}
+
+# AI Chatbot & Twilio Configuration
+GROQ_API_KEY = env('GROQ_API_KEY', default='')
+OPENAI_API_KEY = env('OPENAI_API_KEY', default='')
+TWILIO_ACCOUNT_SID = env('TWILIO_ACCOUNT_SID', default='')
+TWILIO_AUTH_TOKEN = env('TWILIO_AUTH_TOKEN', default='')
+TWILIO_WHATSAPP_FROM = env('TWILIO_WHATSAPP_FROM', default='')
+TWILIO_SKIP_SIGNATURE_VALIDATION = env.bool('TWILIO_SKIP_SIGNATURE_VALIDATION', default=DEBUG)
+
+TWILIO_CONTENT_SID = env('TWILIO_CONTENT_SID', default='HX25c95ef5a1120456a63cc31ec212edd5')
+TWILIO_CONTENT_SID_FRONTDESK = env('TWILIO_CONTENT_SID_FRONTDESK', default='HXb3a3090c3ec58449bb96cb67db7e658a')
+TWILIO_CONTENT_SID_ANALYTICS = env('TWILIO_CONTENT_SID_ANALYTICS', default='HX544516ed67845dc3656a028985b03da2')
+TWILIO_CONTENT_SID_OPERATIONS = env('TWILIO_CONTENT_SID_OPERATIONS', default='HX25beb28d0eac668d4c637a37b8b0c117')
+TWILIO_CONTENT_SID_SECURITY = env('TWILIO_CONTENT_SID_SECURITY', default='HX459d842b55f9a19a2f58fdd8f583b262')
+
 
