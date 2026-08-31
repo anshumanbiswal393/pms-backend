@@ -295,6 +295,13 @@ class ReservationListSerializer(serializers.ModelSerializer):
     """
     room_allocations = ReservationListInventorySerializer(many=True, read_only=True)
     primary_guest_name = serializers.SerializerMethodField()
+    primary_guest_phone = serializers.SerializerMethodField()
+    primary_guest_email = serializers.SerializerMethodField()
+    primary_guest_id_type = serializers.SerializerMethodField()
+    primary_guest_id_number = serializers.SerializerMethodField()
+    primary_guest_nationality = serializers.SerializerMethodField()
+    primary_guest_tier = serializers.SerializerMethodField()
+    primary_guest_city = serializers.SerializerMethodField()
     reservation_source_name = serializers.CharField(source='reservation_source.name', read_only=True)
     reservation_source_icon = serializers.SerializerMethodField()
     property_name = serializers.CharField(source='property.name', read_only=True)
@@ -311,7 +318,8 @@ class ReservationListSerializer(serializers.ModelSerializer):
             'market_segment', 'booking_date', 'arrival_date', 'departure_date',
             'check_in_time', 'check_out_time', 'adults', 'children',
             'total_amount', 'tax_amount', 'discount_amount', 'paid_amount', 'balance_amount', 'grand_total',
-            'primary_guest', 'primary_guest_name',
+            'primary_guest', 'primary_guest_name', 'primary_guest_phone', 'primary_guest_email',
+            'primary_guest_id_type', 'primary_guest_id_number', 'primary_guest_nationality', 'primary_guest_tier', 'primary_guest_city',
             'reservation_source', 'reservation_source_name', 'reservation_source_icon',
             'corporate_account', 'group_block', 'room_allocations', 'created_at', 'updated_at'
         ]
@@ -336,6 +344,56 @@ class ReservationListSerializer(serializers.ModelSerializer):
             return "Guest"
         return f"{obj.primary_guest.first_name} {obj.primary_guest.last_name}".strip()
 
+    def get_primary_guest_phone(self, obj):
+        if not obj.primary_guest:
+            return ""
+        contact = obj.primary_guest.contacts.first()
+        return contact.phone if contact and contact.phone else ""
+
+    def get_primary_guest_email(self, obj):
+        if not obj.primary_guest:
+            return ""
+        contact = obj.primary_guest.contacts.first()
+        return contact.email if contact and contact.email else ""
+
+    def get_primary_guest_id_type(self, obj):
+        if not obj.primary_guest:
+            return "NATIONAL_ID"
+        doc = obj.primary_guest.documents.first()
+        return doc.document_type if doc and doc.document_type else "NATIONAL_ID"
+
+    def get_primary_guest_id_number(self, obj):
+        if not obj.primary_guest:
+            return ""
+        doc = obj.primary_guest.documents.first()
+        if not doc or not doc.document_number:
+            return ""
+        doc_num = str(doc.document_number)
+        import base64
+        try:
+            decoded = base64.b64decode(doc_num).decode('utf-8')
+            if decoded.isalnum() or len(decoded) >= 4:
+                return decoded
+        except Exception:
+            pass
+        return doc_num
+
+    def get_primary_guest_nationality(self, obj):
+        if not obj.primary_guest:
+            return "Indian"
+        return obj.primary_guest.nationality or "Indian"
+
+    def get_primary_guest_tier(self, obj):
+        if not obj.primary_guest:
+            return "STANDARD"
+        return obj.primary_guest.loyalty_tier or "STANDARD"
+
+    def get_primary_guest_city(self, obj):
+        if not obj.primary_guest:
+            return ""
+        contact = obj.primary_guest.contacts.first()
+        return contact.city if contact and contact.city else ""
+
     def get_adults(self, obj):
         allocs = obj.room_allocations.all()
         return sum(getattr(a, 'adult_count', 0) for a in allocs) or 1
@@ -353,6 +411,13 @@ class ReservationSerializer(serializers.ModelSerializer):
     timeline_events = ReservationEventSerializer(many=True, read_only=True)
     all_guests = serializers.SerializerMethodField()
     primary_guest_name = serializers.SerializerMethodField()
+    primary_guest_phone = serializers.SerializerMethodField()
+    primary_guest_email = serializers.SerializerMethodField()
+    primary_guest_id_type = serializers.SerializerMethodField()
+    primary_guest_id_number = serializers.SerializerMethodField()
+    primary_guest_nationality = serializers.SerializerMethodField()
+    primary_guest_tier = serializers.SerializerMethodField()
+    primary_guest_city = serializers.SerializerMethodField()
     reservation_source_name = serializers.CharField(source='reservation_source.name', read_only=True)
     reservation_source_icon = serializers.SerializerMethodField()
     grand_total = serializers.SerializerMethodField()
@@ -385,6 +450,56 @@ class ReservationSerializer(serializers.ModelSerializer):
         if not obj.primary_guest:
             return "Guest"
         return f"{obj.primary_guest.first_name} {obj.primary_guest.last_name}".strip()
+
+    def get_primary_guest_phone(self, obj):
+        if not obj.primary_guest:
+            return ""
+        contact = obj.primary_guest.contacts.first()
+        return contact.phone if contact and contact.phone else ""
+
+    def get_primary_guest_email(self, obj):
+        if not obj.primary_guest:
+            return ""
+        contact = obj.primary_guest.contacts.first()
+        return contact.email if contact and contact.email else ""
+
+    def get_primary_guest_id_type(self, obj):
+        if not obj.primary_guest:
+            return "NATIONAL_ID"
+        doc = obj.primary_guest.documents.first()
+        return doc.document_type if doc and doc.document_type else "NATIONAL_ID"
+
+    def get_primary_guest_id_number(self, obj):
+        if not obj.primary_guest:
+            return ""
+        doc = obj.primary_guest.documents.first()
+        if not doc or not doc.document_number:
+            return ""
+        doc_num = str(doc.document_number)
+        import base64
+        try:
+            decoded = base64.b64decode(doc_num).decode('utf-8')
+            if decoded.isalnum() or len(decoded) >= 4:
+                return decoded
+        except Exception:
+            pass
+        return doc_num
+
+    def get_primary_guest_nationality(self, obj):
+        if not obj.primary_guest:
+            return "Indian"
+        return obj.primary_guest.nationality or "Indian"
+
+    def get_primary_guest_tier(self, obj):
+        if not obj.primary_guest:
+            return "STANDARD"
+        return obj.primary_guest.loyalty_tier or "STANDARD"
+
+    def get_primary_guest_city(self, obj):
+        if not obj.primary_guest:
+            return ""
+        contact = obj.primary_guest.contacts.first()
+        return contact.city if contact and contact.city else ""
 
     def get_all_guests(self, obj):
         guests = []

@@ -94,6 +94,7 @@ MIDDLEWARE = [
     'apps.core.accounts.middleware.AccountLockoutMiddleware',
     'apps.core.accounts.middleware.IPWhitelistMiddleware',
     'apps.core.audit.middleware.AuditMiddleware',
+    'apps.core.monitoring.middleware.ApplicationLoggingMiddleware',
 ]
 
 ROOT_URLCONF = 'retrod_pms.urls'
@@ -321,7 +322,7 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
-# Structured Logging with PII Redaction Filter
+# Structured Logging with PII Redaction Filter & Database Error Log Persistence
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -342,9 +343,13 @@ LOGGING = {
             'filters': ['pii_masking'],
             'formatter': 'verbose',
         },
+        'db_error_log': {
+            'class': 'apps.core.monitoring.handlers.DatabaseErrorLogHandler',
+            'level': 'ERROR',
+        },
     },
     'root': {
-        'handlers': ['console'],
+        'handlers': ['console', 'db_error_log'],
         'level': 'INFO',
     },
 }
