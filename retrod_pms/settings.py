@@ -19,9 +19,9 @@ env_file = BASE_DIR / '.env'
 if env_file.exists():
     environ.Env.read_env(str(env_file))
 
-SECRET_KEY = env('SECRET_KEY')
-DEBUG = env('DEBUG')
-ALLOWED_HOSTS = env('ALLOWED_HOSTS')
+SECRET_KEY = env('SECRET_KEY', default='django-insecure-retrod-pms-secret-key-production-dev')
+DEBUG = env.bool('DEBUG', default=True)
+ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['*'])
 RAZORPAY_KEY_ID = env('RAZORPAY_KEY_ID', default='')
 RAZORPAY_KEY_SECRET = env('RAZORPAY_KEY_SECRET', default='')
 
@@ -176,16 +176,37 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS Config
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_ALL_ORIGINS = env.bool('CORS_ALLOW_ALL_ORIGINS', default=False)
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://144.31.146.64:3000",
-    "https://app.dev.retrod.in"
+    "https://app.dev.retrod.in",
+    "https://app.dev.retrod.in:8443",
+    "http://app.dev.retrod.in",
+    "http://app.dev.retrod.in:8443",
+])
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https?://.*\.retrod\.in(:\d+)?$",
+    r"^https?://localhost(:\d+)?$",
+    r"^https?://127\.0\.0\.1(:\d+)?$",
+]
+
+CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[
+    "https://app.dev.retrod.in",
+    "https://app.dev.retrod.in:8443",
+    "http://app.dev.retrod.in",
+    "http://app.dev.retrod.in:8443",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://*.retrod.in",
+    "http://*.retrod.in",
 ])
 
-CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
 CORS_ALLOW_HEADERS = [
     "accept",
     "accept-encoding",
@@ -202,6 +223,11 @@ CORS_ALLOW_HEADERS = [
     "x-hotel-subdomain",
     "x-tenant-slug",
 ]
+
+# SSL & Proxy headers when behind Nginx/Cloudflare/Reverse Proxy
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
+USE_X_FORWARDED_PORT = True
 
 
 # Django REST Framework Settings
