@@ -142,7 +142,9 @@ class ReservationViewSet(viewsets.ModelViewSet):
                 'reservation_source'
             ).prefetch_related(
                 'room_allocations__inventory_unit',
-                'room_allocations__inventory_unit_type'
+                'room_allocations__inventory_unit_type',
+                'primary_guest__contacts',
+                'primary_guest__documents',
             )
         else:
             qs = Reservation.objects.filter(tenant=tenant).select_related(

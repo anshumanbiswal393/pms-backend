@@ -347,25 +347,29 @@ class ReservationListSerializer(serializers.ModelSerializer):
     def get_primary_guest_phone(self, obj):
         if not obj.primary_guest:
             return ""
-        contact = obj.primary_guest.contacts.first()
+        contacts = obj.primary_guest.contacts.all()
+        contact = contacts[0] if contacts else None
         return contact.phone if contact and contact.phone else ""
 
     def get_primary_guest_email(self, obj):
         if not obj.primary_guest:
             return ""
-        contact = obj.primary_guest.contacts.first()
+        contacts = obj.primary_guest.contacts.all()
+        contact = contacts[0] if contacts else None
         return contact.email if contact and contact.email else ""
 
     def get_primary_guest_id_type(self, obj):
         if not obj.primary_guest:
             return "NATIONAL_ID"
-        doc = obj.primary_guest.documents.first()
+        docs = obj.primary_guest.documents.all()
+        doc = docs[0] if docs else None
         return doc.document_type if doc and doc.document_type else "NATIONAL_ID"
 
     def get_primary_guest_id_number(self, obj):
         if not obj.primary_guest:
             return ""
-        doc = obj.primary_guest.documents.first()
+        docs = obj.primary_guest.documents.all()
+        doc = docs[0] if docs else None
         if not doc or not doc.document_number:
             return ""
         doc_num = str(doc.document_number)
@@ -391,7 +395,8 @@ class ReservationListSerializer(serializers.ModelSerializer):
     def get_primary_guest_city(self, obj):
         if not obj.primary_guest:
             return ""
-        contact = obj.primary_guest.contacts.first()
+        contacts = obj.primary_guest.contacts.all()
+        contact = contacts[0] if contacts else None
         return contact.city if contact and contact.city else ""
 
     def get_adults(self, obj):
@@ -454,25 +459,29 @@ class ReservationSerializer(serializers.ModelSerializer):
     def get_primary_guest_phone(self, obj):
         if not obj.primary_guest:
             return ""
-        contact = obj.primary_guest.contacts.first()
+        contacts = obj.primary_guest.contacts.all()
+        contact = contacts[0] if contacts else None
         return contact.phone if contact and contact.phone else ""
 
     def get_primary_guest_email(self, obj):
         if not obj.primary_guest:
             return ""
-        contact = obj.primary_guest.contacts.first()
+        contacts = obj.primary_guest.contacts.all()
+        contact = contacts[0] if contacts else None
         return contact.email if contact and contact.email else ""
 
     def get_primary_guest_id_type(self, obj):
         if not obj.primary_guest:
             return "NATIONAL_ID"
-        doc = obj.primary_guest.documents.first()
+        docs = obj.primary_guest.documents.all()
+        doc = docs[0] if docs else None
         return doc.document_type if doc and doc.document_type else "NATIONAL_ID"
 
     def get_primary_guest_id_number(self, obj):
         if not obj.primary_guest:
             return ""
-        doc = obj.primary_guest.documents.first()
+        docs = obj.primary_guest.documents.all()
+        doc = docs[0] if docs else None
         if not doc or not doc.document_number:
             return ""
         doc_num = str(doc.document_number)
@@ -498,7 +507,8 @@ class ReservationSerializer(serializers.ModelSerializer):
     def get_primary_guest_city(self, obj):
         if not obj.primary_guest:
             return ""
-        contact = obj.primary_guest.contacts.first()
+        contacts = obj.primary_guest.contacts.all()
+        contact = contacts[0] if contacts else None
         return contact.city if contact and contact.city else ""
 
     def get_all_guests(self, obj):
