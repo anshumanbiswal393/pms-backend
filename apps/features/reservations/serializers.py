@@ -308,6 +308,9 @@ class ReservationListSerializer(serializers.ModelSerializer):
     grand_total = serializers.SerializerMethodField()
     adults = serializers.SerializerMethodField()
     children = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+    checked_in_by_name = serializers.SerializerMethodField()
+    actor_name = serializers.SerializerMethodField()
 
     property_business_date = serializers.SerializerMethodField()
 
@@ -321,8 +324,35 @@ class ReservationListSerializer(serializers.ModelSerializer):
             'primary_guest', 'primary_guest_name', 'primary_guest_phone', 'primary_guest_email',
             'primary_guest_id_type', 'primary_guest_id_number', 'primary_guest_nationality', 'primary_guest_tier', 'primary_guest_city',
             'reservation_source', 'reservation_source_name', 'reservation_source_icon',
-            'corporate_account', 'group_block', 'room_allocations', 'created_at', 'updated_at'
+            'corporate_account', 'group_block', 'room_allocations', 'created_by_name', 'checked_in_by_name', 'actor_name', 'created_at', 'updated_at'
         ]
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            name = f"{obj.created_by.first_name or ''} {obj.created_by.last_name or ''}".strip()
+            return name or obj.created_by.username or "Admin"
+        return "Admin"
+
+    def get_checked_in_by_name(self, obj):
+        if obj.status in ["CHECKED_IN", "CHECKED_OUT"]:
+            if hasattr(obj, 'timeline_events'):
+                ci_event = obj.timeline_events.filter(event_type__icontains="CHECK_IN").first()
+                if ci_event and ci_event.actor:
+                    actor_name = f"{ci_event.actor.first_name or ''} {ci_event.actor.last_name or ''}".strip()
+                    if actor_name:
+                        return actor_name
+            if obj.updated_by:
+                name = f"{obj.updated_by.first_name or ''} {obj.updated_by.last_name or ''}".strip()
+                if name:
+                    return name
+        if obj.created_by:
+            name = f"{obj.created_by.first_name or ''} {obj.created_by.last_name or ''}".strip()
+            if name:
+                return name
+        return "Frontdesk Agent"
+
+    def get_actor_name(self, obj):
+        return self.get_checked_in_by_name(obj)
 
     def get_property_business_date(self, obj):
         if obj.property and obj.property.business_date:
@@ -427,6 +457,9 @@ class ReservationSerializer(serializers.ModelSerializer):
     reservation_source_icon = serializers.SerializerMethodField()
     grand_total = serializers.SerializerMethodField()
     property_business_date = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+    checked_in_by_name = serializers.SerializerMethodField()
+    actor_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Reservation
@@ -435,6 +468,33 @@ class ReservationSerializer(serializers.ModelSerializer):
             'id', 'tenant', 'confirmation_number', 'total_amount', 'tax_amount',
             'booking_date', 'status', 'created_at', 'updated_at'
         )
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            name = f"{obj.created_by.first_name or ''} {obj.created_by.last_name or ''}".strip()
+            return name or obj.created_by.username or "Admin"
+        return "Admin"
+
+    def get_checked_in_by_name(self, obj):
+        if obj.status in ["CHECKED_IN", "CHECKED_OUT"]:
+            if hasattr(obj, 'timeline_events'):
+                ci_event = obj.timeline_events.filter(event_type__icontains="CHECK_IN").first()
+                if ci_event and ci_event.actor:
+                    actor_name = f"{ci_event.actor.first_name or ''} {ci_event.actor.last_name or ''}".strip()
+                    if actor_name:
+                        return actor_name
+            if obj.updated_by:
+                name = f"{obj.updated_by.first_name or ''} {obj.updated_by.last_name or ''}".strip()
+                if name:
+                    return name
+        if obj.created_by:
+            name = f"{obj.created_by.first_name or ''} {obj.created_by.last_name or ''}".strip()
+            if name:
+                return name
+        return "Frontdesk Agent"
+
+    def get_actor_name(self, obj):
+        return self.get_checked_in_by_name(obj)
 
     def get_property_business_date(self, obj):
         if obj.property and obj.property.business_date:
