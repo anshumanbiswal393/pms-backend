@@ -311,6 +311,8 @@ class ReservationListSerializer(serializers.ModelSerializer):
     created_by_name = serializers.SerializerMethodField()
     checked_in_by_name = serializers.SerializerMethodField()
     actor_name = serializers.SerializerMethodField()
+    rate_plan_name = serializers.SerializerMethodField()
+    rate_plan_code = serializers.SerializerMethodField()
 
     property_business_date = serializers.SerializerMethodField()
 
@@ -324,8 +326,29 @@ class ReservationListSerializer(serializers.ModelSerializer):
             'primary_guest', 'primary_guest_name', 'primary_guest_phone', 'primary_guest_email',
             'primary_guest_id_type', 'primary_guest_id_number', 'primary_guest_nationality', 'primary_guest_tier', 'primary_guest_city',
             'reservation_source', 'reservation_source_name', 'reservation_source_icon',
-            'corporate_account', 'group_block', 'room_allocations', 'created_by_name', 'checked_in_by_name', 'actor_name', 'created_at', 'updated_at'
+            'corporate_account', 'group_block', 'room_allocations', 'rate_plan_name', 'rate_plan_code',
+            'created_by_name', 'checked_in_by_name', 'actor_name', 'created_at', 'updated_at'
         ]
+
+    def get_rate_plan_name(self, obj):
+        try:
+            for alloc in obj.room_allocations.all():
+                snap = alloc.rate_snapshots.first()
+                if snap and snap.rate_plan:
+                    return snap.rate_plan.name
+        except Exception:
+            pass
+        return "AP Plan"
+
+    def get_rate_plan_code(self, obj):
+        try:
+            for alloc in obj.room_allocations.all():
+                snap = alloc.rate_snapshots.first()
+                if snap and snap.rate_plan:
+                    return snap.rate_plan.code or snap.rate_plan.name
+        except Exception:
+            pass
+        return "AP_PLAN"
 
     def get_created_by_name(self, obj):
         if obj.created_by:
