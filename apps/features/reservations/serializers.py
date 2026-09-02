@@ -334,21 +334,26 @@ class ReservationListSerializer(serializers.ModelSerializer):
         return "Admin"
 
     def get_checked_in_by_name(self, obj):
-        if obj.status in ["CHECKED_IN", "CHECKED_OUT"]:
-            if hasattr(obj, 'timeline_events'):
-                ci_event = obj.timeline_events.filter(event_type__icontains="CHECK_IN").first()
-                if ci_event and ci_event.actor:
-                    actor_name = f"{ci_event.actor.first_name or ''} {ci_event.actor.last_name or ''}".strip()
-                    if actor_name:
-                        return actor_name
-            if obj.updated_by:
-                name = f"{obj.updated_by.first_name or ''} {obj.updated_by.last_name or ''}".strip()
+        try:
+            if obj.status in ["CHECKED_IN", "CHECKED_OUT"]:
+                if hasattr(obj, 'timeline_events'):
+                    ci_event = obj.timeline_events.filter(event_type__icontains="CHECK_IN").first()
+                    if ci_event:
+                        actor = getattr(ci_event, 'actor_user', None) or getattr(ci_event, 'actor', None)
+                        if actor:
+                            name = f"{getattr(actor, 'first_name', '') or ''} {getattr(actor, 'last_name', '') or ''}".strip()
+                            if name:
+                                return name
+                if obj.updated_by:
+                    name = f"{obj.updated_by.first_name or ''} {obj.updated_by.last_name or ''}".strip()
+                    if name:
+                        return name
+            if obj.created_by:
+                name = f"{obj.created_by.first_name or ''} {obj.created_by.last_name or ''}".strip()
                 if name:
                     return name
-        if obj.created_by:
-            name = f"{obj.created_by.first_name or ''} {obj.created_by.last_name or ''}".strip()
-            if name:
-                return name
+        except Exception:
+            pass
         return "Frontdesk Agent"
 
     def get_actor_name(self, obj):
@@ -476,21 +481,26 @@ class ReservationSerializer(serializers.ModelSerializer):
         return "Admin"
 
     def get_checked_in_by_name(self, obj):
-        if obj.status in ["CHECKED_IN", "CHECKED_OUT"]:
-            if hasattr(obj, 'timeline_events'):
-                ci_event = obj.timeline_events.filter(event_type__icontains="CHECK_IN").first()
-                if ci_event and ci_event.actor:
-                    actor_name = f"{ci_event.actor.first_name or ''} {ci_event.actor.last_name or ''}".strip()
-                    if actor_name:
-                        return actor_name
-            if obj.updated_by:
-                name = f"{obj.updated_by.first_name or ''} {obj.updated_by.last_name or ''}".strip()
+        try:
+            if obj.status in ["CHECKED_IN", "CHECKED_OUT"]:
+                if hasattr(obj, 'timeline_events'):
+                    ci_event = obj.timeline_events.filter(event_type__icontains="CHECK_IN").first()
+                    if ci_event:
+                        actor = getattr(ci_event, 'actor_user', None) or getattr(ci_event, 'actor', None)
+                        if actor:
+                            name = f"{getattr(actor, 'first_name', '') or ''} {getattr(actor, 'last_name', '') or ''}".strip()
+                            if name:
+                                return name
+                if obj.updated_by:
+                    name = f"{obj.updated_by.first_name or ''} {obj.updated_by.last_name or ''}".strip()
+                    if name:
+                        return name
+            if obj.created_by:
+                name = f"{obj.created_by.first_name or ''} {obj.created_by.last_name or ''}".strip()
                 if name:
                     return name
-        if obj.created_by:
-            name = f"{obj.created_by.first_name or ''} {obj.created_by.last_name or ''}".strip()
-            if name:
-                return name
+        except Exception:
+            pass
         return "Frontdesk Agent"
 
     def get_actor_name(self, obj):
