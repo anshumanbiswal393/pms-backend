@@ -461,7 +461,11 @@ class UnifiedMailService:
         if not subject:
             email_type_upper = email_type.upper()
             if email_type_upper in ["OTP", "OTP_VERIFICATION"]:
-                subject = f"Your Verification Code - {hotel_name}"
+                otp_code = str(data.get("otp_code") or data.get("code") or data.get("otp") or "").strip()
+                if otp_code:
+                    subject = f"Your Verification Code {otp_code} - {hotel_name}"
+                else:
+                    subject = f"Your Verification Code - {hotel_name}"
             elif email_type_upper in ["RESERVATION", "RESERVATION_CONFIRMATION", "BOOKING_CONFIRMATION"]:
                 resv_id = data.get("reservation_id") or data.get("booking_code") or "RES"
                 subject = f"Booking Confirmation #{resv_id} - {hotel_name}"
