@@ -302,6 +302,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
     primary_guest_nationality = serializers.SerializerMethodField()
     primary_guest_tier = serializers.SerializerMethodField()
     primary_guest_city = serializers.SerializerMethodField()
+    primary_guest_address = serializers.SerializerMethodField()
     reservation_source_name = serializers.CharField(source='reservation_source.name', read_only=True)
     reservation_source_icon = serializers.SerializerMethodField()
     property_name = serializers.CharField(source='property.name', read_only=True)
@@ -324,7 +325,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
             'check_in_time', 'check_out_time', 'adults', 'children',
             'total_amount', 'tax_amount', 'discount_amount', 'paid_amount', 'balance_amount', 'grand_total',
             'primary_guest', 'primary_guest_name', 'primary_guest_phone', 'primary_guest_email',
-            'primary_guest_id_type', 'primary_guest_id_number', 'primary_guest_nationality', 'primary_guest_tier', 'primary_guest_city',
+            'primary_guest_id_type', 'primary_guest_id_number', 'primary_guest_nationality', 'primary_guest_tier', 'primary_guest_city', 'primary_guest_address',
             'reservation_source', 'reservation_source_name', 'reservation_source_icon',
             'corporate_account', 'group_block', 'room_allocations', 'rate_plan_name', 'rate_plan_code',
             'created_by_name', 'checked_in_by_name', 'actor_name', 'created_at', 'updated_at'
@@ -416,29 +417,79 @@ class ReservationListSerializer(serializers.ModelSerializer):
         contact = contacts[0] if contacts else None
         return contact.email if contact and contact.email else ""
 
-    def get_primary_guest_id_type(self, obj):
-        if not obj.primary_guest:
-            return "NATIONAL_ID"
-        docs = obj.primary_guest.documents.all()
-        doc = docs[0] if docs else None
-        return doc.document_type if doc and doc.document_type else "NATIONAL_ID"
-
-    def get_primary_guest_id_number(self, obj):
-        if not obj.primary_guest:
-            return ""
-        docs = obj.primary_guest.documents.all()
-        doc = docs[0] if docs else None
-        if not doc or not doc.document_number:
-            return ""
-        doc_num = str(doc.document_number)
-        import base64
+    def _get_guest_obj(self, obj):
+        if obj.primary_guest:
+            return obj.primary_guest
         try:
-            decoded = base64.b64decode(doc_num).decode('utf-8')
-            if decoded.isalnum() or len(decoded) >= 4:
-                return decoded
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest:
+                    return rg.guest
         except Exception:
             pass
-        return doc_num
+        return None
+
+    def get_primary_guest_address(self, obj):
+        guest = self._get_guest_obj(obj)
+        if guest:
+            contacts = list(guest.contacts.all()) if hasattr(guest, 'contacts') else []
+            contact = contacts[0] if contacts else None
+            if contact:
+                parts = [contact.address_line_1, contact.address_line_2, contact.city, contact.state, contact.country]
+                res = ", ".join([p for p in parts if p])
+                if res:
+                    return res
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    snap = rg.guest_snapshot
+                    addr = snap.get('address') or snap.get('address_line_1') or snap.get('city')
+                    if addr:
+                        return addr
+        except Exception:
+            pass
+        return ""
+
+    def get_primary_guest_id_type(self, obj):
+        guest = self._get_guest_obj(obj)
+        if guest:
+            docs = list(guest.documents.all()) if hasattr(guest, 'documents') else []
+            doc = docs[0] if docs else None
+            if doc and doc.document_type:
+                return doc.document_type
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    id_t = rg.guest_snapshot.get('id_type') or rg.guest_snapshot.get('document_type')
+                    if id_t:
+                        return id_t
+        except Exception:
+            pass
+        return ""
+
+    def get_primary_guest_id_number(self, obj):
+        guest = self._get_guest_obj(obj)
+        if guest:
+            docs = list(guest.documents.all()) if hasattr(guest, 'documents') else []
+            doc = docs[0] if docs else None
+            if doc and doc.document_number:
+                from apps.core.common.encryption import EncryptionHelper
+                try:
+                    return EncryptionHelper.decrypt(doc.document_number)
+                except Exception:
+                    return str(doc.document_number)
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    id_n = rg.guest_snapshot.get('id_number') or rg.guest_snapshot.get('document_number')
+                    if id_n:
+                        return id_n
+        except Exception:
+            pass
+        return ""
 
     def get_primary_guest_nationality(self, obj):
         if not obj.primary_guest:
@@ -476,6 +527,7 @@ class ReservationSerializer(serializers.ModelSerializer):
     primary_guest_name = serializers.SerializerMethodField()
     primary_guest_phone = serializers.SerializerMethodField()
     primary_guest_email = serializers.SerializerMethodField()
+    primary_guest_address = serializers.SerializerMethodField()
     primary_guest_id_type = serializers.SerializerMethodField()
     primary_guest_id_number = serializers.SerializerMethodField()
     primary_guest_nationality = serializers.SerializerMethodField()
@@ -544,6 +596,18 @@ class ReservationSerializer(serializers.ModelSerializer):
         total = (obj.total_amount or Decimal('0.00')) + (obj.tax_amount or Decimal('0.00')) - (obj.discount_amount or Decimal('0.00'))
         return str(total)
 
+    def _get_guest_obj(self, obj):
+        if obj.primary_guest:
+            return obj.primary_guest
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest:
+                    return rg.guest
+        except Exception:
+            pass
+        return None
+
     def get_primary_guest_name(self, obj):
         if not obj.primary_guest:
             return "Guest"
@@ -563,29 +627,67 @@ class ReservationSerializer(serializers.ModelSerializer):
         contact = contacts[0] if contacts else None
         return contact.email if contact and contact.email else ""
 
-    def get_primary_guest_id_type(self, obj):
-        if not obj.primary_guest:
-            return "NATIONAL_ID"
-        docs = obj.primary_guest.documents.all()
-        doc = docs[0] if docs else None
-        return doc.document_type if doc and doc.document_type else "NATIONAL_ID"
-
-    def get_primary_guest_id_number(self, obj):
-        if not obj.primary_guest:
-            return ""
-        docs = obj.primary_guest.documents.all()
-        doc = docs[0] if docs else None
-        if not doc or not doc.document_number:
-            return ""
-        doc_num = str(doc.document_number)
-        import base64
+    def get_primary_guest_address(self, obj):
+        guest = self._get_guest_obj(obj)
+        if guest:
+            contacts = list(guest.contacts.all()) if hasattr(guest, 'contacts') else []
+            contact = contacts[0] if contacts else None
+            if contact:
+                parts = [contact.address_line_1, contact.address_line_2, contact.city, contact.state, contact.country]
+                res = ", ".join([p for p in parts if p])
+                if res:
+                    return res
         try:
-            decoded = base64.b64decode(doc_num).decode('utf-8')
-            if decoded.isalnum() or len(decoded) >= 4:
-                return decoded
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    snap = rg.guest_snapshot
+                    addr = snap.get('address') or snap.get('address_line_1') or snap.get('city')
+                    if addr:
+                        return addr
         except Exception:
             pass
-        return doc_num
+        return ""
+
+    def get_primary_guest_id_type(self, obj):
+        guest = self._get_guest_obj(obj)
+        if guest:
+            docs = list(guest.documents.all()) if hasattr(guest, 'documents') else []
+            doc = docs[0] if docs else None
+            if doc and doc.document_type:
+                return doc.document_type
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    id_t = rg.guest_snapshot.get('id_type') or rg.guest_snapshot.get('document_type')
+                    if id_t:
+                        return id_t
+        except Exception:
+            pass
+        return ""
+
+    def get_primary_guest_id_number(self, obj):
+        guest = self._get_guest_obj(obj)
+        if guest:
+            docs = list(guest.documents.all()) if hasattr(guest, 'documents') else []
+            doc = docs[0] if docs else None
+            if doc and doc.document_number:
+                from apps.core.common.encryption import EncryptionHelper
+                try:
+                    return EncryptionHelper.decrypt(doc.document_number)
+                except Exception:
+                    return str(doc.document_number)
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    id_n = rg.guest_snapshot.get('id_number') or rg.guest_snapshot.get('document_number')
+                    if id_n:
+                        return id_n
+        except Exception:
+            pass
+        return ""
 
     def get_primary_guest_nationality(self, obj):
         if not obj.primary_guest:
