@@ -487,12 +487,19 @@ class UnifiedMailService:
         html_body = cls.generate_html_content(email_type, recipient_name or "", prop_info, data)
         plain_text_body = strip_tags(html_body)
 
-        from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None) or f"{hotel_name} <no-reply@retrodpms.com>"
+        default_from = getattr(settings, 'DEFAULT_FROM_EMAIL', '') or getattr(settings, 'EMAIL_HOST_USER', '') or 'noreply@retrod.in'
+        if '<' in default_from:
+            from_email = default_from
+        elif default_from:
+            from_email = f"{hotel_name} <{default_from}>"
+        else:
+            from_email = f"{hotel_name} <noreply@retrod.in>"
 
-        logger.info(f"[UnifiedMailService] Sending '{email_type}' email to '{recipient_email}' | Subject: '{subject}'")
+        logger.info(f"[UnifiedMailService] Sending '{email_type}' email to '{recipient_email}' | Subject: '{subject}' | From: '{from_email}'")
         print(f"\n=======================================================")
         print(f"[UNIFIED MAIL SERVICE DISPATCH]")
         print(f" Type:      {email_type}")
+        print(f" From:      {from_email}")
         print(f" To:        {recipient_name} <{recipient_email}>")
         print(f" Subject:   {subject}")
         print(f" Property:  {hotel_name}")
@@ -511,10 +518,12 @@ class UnifiedMailService:
             import threading
             def send_async():
                 try:
-                    msg.send(fail_silently=False)
-                    logger.info(f"[UnifiedMailService] Async send successful to {recipient_email}")
+                    sent_count = msg.send(fail_silently=False)
+                    logger.info(f"[UnifiedMailService] Async send successful to {recipient_email} (count={sent_count})")
+                    print(f"[UnifiedMailService] Async send successful to {recipient_email}")
                 except Exception as e:
                     logger.error(f"[UnifiedMailService] Async SMTP exception for {recipient_email}: {e}")
+                    print(f"[UnifiedMailService ERROR] SMTP exception for {recipient_email}: {e}")
 
             threading.Thread(target=send_async).start()
 

@@ -249,6 +249,8 @@ class AuthService:
         user.save(update_fields=['otp_code', 'otp_expires_at'])
 
         # Dispatch code
+        if '@' in contact:
+            provider_type = 'email'
         provider = get_otp_provider(provider_type)
         dispatched = provider.send_otp(contact, code)
         

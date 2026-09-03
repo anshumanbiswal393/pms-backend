@@ -365,9 +365,10 @@ class RequestOTPView(APIView):
                 return Response({'error': 'Provide email or phone contact.'}, status=status.HTTP_400_BAD_REQUEST)
         
         from django.conf import settings
-        configured_provider = getattr(settings, 'OTP_PROVIDER', 'mock')
-        # Strictly enforce system-configured provider (email/sms) if set, otherwise fallback to request parameter
-        if configured_provider in ['email', 'sms']:
+        configured_provider = getattr(settings, 'OTP_PROVIDER', 'email')
+        if '@' in contact:
+            provider_type = 'email'
+        elif configured_provider in ['email', 'sms']:
             provider_type = configured_provider
         else:
             provider_type = request.data.get('provider') or configured_provider

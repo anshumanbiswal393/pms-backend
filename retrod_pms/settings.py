@@ -293,7 +293,7 @@ EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='noreply@retrod.in')
 
 # OTP & Domain Configuration
-OTP_PROVIDER = env('OTP_PROVIDER', default='mock')
+OTP_PROVIDER = env('OTP_PROVIDER', default='email')
 APP_BASE_URL = env('APP_BASE_URL', default='https://app.dev.retrod.in:8443')
 
 # Caching with Redis
