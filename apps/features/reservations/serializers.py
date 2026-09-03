@@ -475,7 +475,6 @@ class ReservationListSerializer(serializers.ModelSerializer):
             docs = list(guest.documents.all()) if hasattr(guest, 'documents') else []
             doc = docs[0] if docs else None
             if doc and doc.document_number:
-                from apps.core.common.encryption import EncryptionHelper
                 try:
                     return EncryptionHelper.decrypt(doc.document_number)
                 except Exception:
@@ -673,7 +672,6 @@ class ReservationSerializer(serializers.ModelSerializer):
             docs = list(guest.documents.all()) if hasattr(guest, 'documents') else []
             doc = docs[0] if docs else None
             if doc and doc.document_number:
-                from apps.core.common.encryption import EncryptionHelper
                 try:
                     return EncryptionHelper.decrypt(doc.document_number)
                 except Exception:
