@@ -1008,3 +1008,43 @@ class WaitlistViewSet(viewsets.ModelViewSet):
         entry.status = 'CANCELLED'
         entry.save(update_fields=['status', 'updated_at'])
         return Response(WaitlistEntrySerializer(entry).data)
+
+
+class ReservationEventViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Tenant-scoped ReadOnly ViewSet for Reservation Events (Audit Trails).
+    """
+    serializer_class = ReservationEventSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        tenant = getattr(self.request, 'tenant', None)
+        if not tenant:
+            return ReservationEvent.objects.none()
+
+        qs = ReservationEvent.objects.filter(tenant=tenant).select_related(
+            'reservation', 'reservation__primary_guest', 'reservation__property', 'actor_user'
+        )
+
+        property_id = self.request.query_params.get('property_id') or self.request.query_params.get('property')
+        if property_id:
+            qs = qs.filter(reservation__property_id=property_id)
+
+        date_from = self.request.query_params.get('date_from') or self.request.query_params.get('from_date')
+        if date_from:
+            qs = qs.filter(created_at__date__gte=date_from)
+
+        date_to = self.request.query_params.get('date_to') or self.request.query_params.get('to_date')
+        if date_to:
+            qs = qs.filter(created_at__date__lte=date_to)
+
+        actor = self.request.query_params.get('actor')
+        if actor:
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(actor_user__username__icontains=actor) |
+                Q(actor_user__first_name__icontains=actor) |
+                Q(actor_user__last_name__icontains=actor)
+            )
+
+        return qs.order_by('-created_at')

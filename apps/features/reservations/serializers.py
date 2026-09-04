@@ -204,6 +204,12 @@ class ReservationEventSerializer(serializers.ModelSerializer):
     actor_username = serializers.CharField(source='actor_user.username', read_only=True)
     actor_name = serializers.SerializerMethodField()
     actor_role = serializers.SerializerMethodField()
+    confirmation_number = serializers.SerializerMethodField()
+    primary_guest_name = serializers.SerializerMethodField()
+    room_number = serializers.SerializerMethodField()
+    folio_number = serializers.SerializerMethodField()
+    property_id = serializers.SerializerMethodField()
+    property_name = serializers.SerializerMethodField()
 
     class Meta:
         model = ReservationEvent
@@ -224,6 +230,39 @@ class ReservationEventSerializer(serializers.ModelSerializer):
         if getattr(obj.actor_user, 'is_staff', False):
             return "Owner"
         return "Staff"
+
+    def get_confirmation_number(self, obj):
+        if obj.reservation:
+            return obj.reservation.confirmation_number or str(obj.reservation.id)[:8]
+        return "0"
+
+    def get_primary_guest_name(self, obj):
+        if obj.reservation and obj.reservation.primary_guest:
+            g = obj.reservation.primary_guest
+            return f"{g.first_name} {g.last_name}".strip()
+        return ""
+
+    def get_room_number(self, obj):
+        if obj.reservation:
+            alloc = obj.reservation.room_allocations.first()
+            if alloc and alloc.inventory_unit:
+                return alloc.inventory_unit.name
+        return ""
+
+    def get_folio_number(self, obj):
+        if obj.payload_diff and isinstance(obj.payload_diff, dict) and 'folio_number' in obj.payload_diff:
+            return str(obj.payload_diff['folio_number'])
+        return "0"
+
+    def get_property_id(self, obj):
+        if obj.reservation:
+            return str(obj.reservation.property_id)
+        return ""
+
+    def get_property_name(self, obj):
+        if obj.reservation and obj.reservation.property:
+            return obj.reservation.property.name
+        return ""
 
 
 class ReservationInventorySerializer(serializers.ModelSerializer):
