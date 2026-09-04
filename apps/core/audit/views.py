@@ -15,7 +15,6 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     """
     serializer_class = AuditLogSerializer
     permission_classes = [permissions.IsAuthenticated]
-    pagination_class = AuditLogPagination
 
     def get_queryset(self):
         tenant = getattr(self.request.user, 'tenant', getattr(self.request, 'tenant', None))
