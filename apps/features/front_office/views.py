@@ -1,3 +1,4 @@
+from datetime import datetime, date
 import logging
 from rest_framework import views, permissions, status
 from rest_framework.response import Response
@@ -55,8 +56,16 @@ class NightAuditStatusView(views.APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        target_date = None
+        date_str = request.query_params.get('date')
+        if date_str:
+            try:
+                target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except Exception:
+                target_date = None
+
         try:
-            status_data = NightAuditService.get_audit_status(property_obj, tenant)
+            status_data = NightAuditService.get_audit_status(property_obj, tenant, target_date=target_date)
             return Response(status_data, status=status.HTTP_200_OK)
         except Exception as e:
             logger.exception(f"Error fetching night audit status: {e}")
@@ -74,8 +83,16 @@ class NightAuditValidateView(views.APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        target_date = None
+        date_str = request.data.get('date') or request.data.get('audit_date') or request.query_params.get('date')
+        if date_str:
+            try:
+                target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except Exception:
+                target_date = None
+
         try:
-            val_data = NightAuditService.validate_checklist(property_obj, tenant)
+            val_data = NightAuditService.validate_checklist(property_obj, tenant, target_date=target_date)
             return Response(val_data, status=status.HTTP_200_OK)
         except Exception as e:
             logger.exception(f"Error validating night audit checklist: {e}")
@@ -93,8 +110,16 @@ class NightAuditAutoPostPreviewView(views.APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        target_date = None
+        date_str = request.data.get('date') or request.data.get('audit_date') or request.query_params.get('date')
+        if date_str:
+            try:
+                target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except Exception:
+                target_date = None
+
         try:
-            preview_data = NightAuditService.get_auto_post_preview(property_obj, tenant)
+            preview_data = NightAuditService.get_auto_post_preview(property_obj, tenant, target_date=target_date)
             return Response(preview_data, status=status.HTTP_200_OK)
         except Exception as e:
             logger.exception(f"Error generating auto post preview: {e}")
@@ -115,13 +140,22 @@ class NightAuditExecuteView(views.APIView):
         auto_noshow = request.data.get('auto_process_noshow', True)
         auto_close_cashiers = request.data.get('auto_close_cashiers', True)
 
+        target_date = None
+        date_str = request.data.get('date') or request.data.get('audit_date')
+        if date_str:
+            try:
+                target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except Exception:
+                target_date = None
+
         try:
             results = NightAuditService.execute_night_audit(
                 property_obj=property_obj,
                 tenant=tenant,
                 user=request.user,
                 auto_noshow=bool(auto_noshow),
-                auto_close_cashiers=bool(auto_close_cashiers)
+                auto_close_cashiers=bool(auto_close_cashiers),
+                target_date=target_date
             )
             return Response(results, status=status.HTTP_200_OK)
         except Exception as e:

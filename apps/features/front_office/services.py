@@ -25,9 +25,11 @@ class NightAuditService:
         return timezone.now().date()
 
     @classmethod
-    def get_audit_status(cls, property_obj: Property, tenant: Tenant) -> dict:
+    def get_audit_status(cls, property_obj: Property, tenant: Tenant, target_date: date = None) -> dict:
         """Fetches comprehensive status, operational metrics and readiness for Night Audit."""
-        business_date = cls.get_property_business_date(property_obj)
+        property_business_date = cls.get_property_business_date(property_obj)
+        business_date = target_date or property_business_date
+        system_today = timezone.now().date()
         
         # 1. Total rooms and occupied rooms
         total_rooms = InventoryUnit.objects.filter(property=property_obj).count()
@@ -126,18 +128,21 @@ class NightAuditService:
             projected_room_charges += rate
             projected_taxes += (rate * tax_multiplier)
 
-        # 6. Check if audit was already completed for today / current business cycle
-        latest_session = NightAuditSession.objects.filter(
-            property=property_obj
+        # 6. Check if audit was already completed for THIS specific business date
+        session_for_date = NightAuditSession.objects.filter(
+            property=property_obj,
+            audit_date=business_date,
+            status='COMPLETED'
+        ).order_by('-completed_at', '-created_at').first()
+
+        latest_session = session_for_date or NightAuditSession.objects.filter(
+            property=property_obj,
+            status='COMPLETED'
         ).order_by('-audit_date', '-created_at').first()
 
-        already_completed = False
+        already_completed = bool(session_for_date)
         last_audit_session_data = None
-        if latest_session and latest_session.status == 'COMPLETED':
-            summary_new_date = (latest_session.post_audit_summary or {}).get('new_business_date')
-            if str(latest_session.audit_date) == str(business_date) or summary_new_date == str(business_date):
-                already_completed = True
-
+        if latest_session:
             last_audit_session_data = {
                 'id': str(latest_session.id),
                 'audit_date': str(latest_session.audit_date),
@@ -158,8 +163,13 @@ class NightAuditService:
 
         return {
             'business_date': str(business_date),
+            'current_business_date': str(property_business_date),
+            'system_today': str(system_today),
             'next_business_date': str(business_date + timedelta(days=1)),
             'already_completed_today': already_completed,
+            'is_completed': already_completed,
+            'can_run_audit': not already_completed,
+            'requires_catchup': business_date < system_today,
             'operational_metrics': {
                 'total_rooms': total_rooms,
                 'occupied_rooms': occupied_rooms,
@@ -182,9 +192,9 @@ class NightAuditService:
         }
 
     @classmethod
-    def validate_checklist(cls, property_obj: Property, tenant: Tenant) -> dict:
+    def validate_checklist(cls, property_obj: Property, tenant: Tenant, target_date: date = None) -> dict:
         """Runs the 5 core Night Audit validation rules and returns checklist items."""
-        status_data = cls.get_audit_status(property_obj, tenant)
+        status_data = cls.get_audit_status(property_obj, tenant, target_date=target_date)
         ops = status_data['operational_metrics']
 
         checklist = []
@@ -193,58 +203,58 @@ class NightAuditService:
         has_pending_arrivals = ops['pending_checkins_count'] > 0
         checklist.append({
             'key': 'pending_arrivals',
-            'title': 'Arrivals & Check-ins Reconciliation',
-            'description': f"{ops['pending_checkins_count']} expected arrivals have not checked in yet." if has_pending_arrivals else "All scheduled arrivals for today have been checked in or processed.",
-            'status': 'WARNING' if has_pending_arrivals else 'PASS',
+            'title': 'Expected Arrivals Check',
+            'description': 'Ensure all arriving guests for today are checked in or flagged for no-show.',
+            'status': 'FAIL' if has_pending_arrivals else 'PASS',
             'count': ops['pending_checkins_count'],
             'can_auto_resolve': True,
-            'recommendation': 'Check in remaining guests or let Night Audit auto-mark them as No-Show.',
-            'items': status_data['pending_arrivals']
+            'recommendation': 'Use Quick Check-in or mark as No-Show before day close.',
+            'items': status_data['pending_arrivals'],
         })
 
-        # 2. Expected departures
+        # 2. Departures
         has_pending_departures = ops['pending_checkouts_count'] > 0
         checklist.append({
             'key': 'pending_departures',
-            'title': 'Departures & Check-outs Reconciliation',
-            'description': f"{ops['pending_checkouts_count']} scheduled departures are still marked in-house." if has_pending_departures else "All expected departures for today have settled and checked out.",
-            'status': 'WARNING' if has_pending_departures else 'PASS',
+            'title': 'Overdue Departures Check',
+            'description': 'Verify departing guests have checked out and folios settled.',
+            'status': 'FAIL' if has_pending_departures else 'PASS',
             'count': ops['pending_checkouts_count'],
             'can_auto_resolve': False,
-            'recommendation': 'Perform checkout or extend reservation stay date before rolling over.',
-            'items': status_data['pending_departures']
+            'recommendation': 'Extend reservation stay dates or process check-outs.',
+            'items': status_data['pending_departures'],
         })
 
-        # 3. Cashier shifts
+        # 3. Open Cashier Drawers
         has_open_shifts = ops['open_shifts_count'] > 0
         checklist.append({
             'key': 'cashier_shifts',
-            'title': 'Front Desk Cashier Drawer Closures',
-            'description': f"{ops['open_shifts_count']} cashier drawer shifts are currently open." if has_open_shifts else "All front desk cashier shifts have been balanced and closed.",
-            'status': 'WARNING' if has_open_shifts else 'PASS',
+            'title': 'Open Cashier Shifts',
+            'description': 'Ensure front desk cash drawers are reconciled and closed.',
+            'status': 'WARN' if has_open_shifts else 'PASS',
             'count': ops['open_shifts_count'],
             'can_auto_resolve': True,
-            'recommendation': 'Close active shifts or auto-reconcile during rollover.',
-            'items': status_data['open_shifts']
+            'recommendation': 'Auto-close option will close active shifts during night audit execution.',
+            'items': status_data['open_shifts'],
         })
 
-        # 4. Outlets & POS
+        # 4. In-House Guest Folios Status
         checklist.append({
-            'key': 'pos_outlets',
-            'title': 'F&B POS & Outlet Settlement',
-            'description': 'All restaurant, bar, and room service orders verified and settled.',
+            'key': 'inhouse_folios',
+            'title': 'In-House Guest Folios Check',
+            'description': 'Validates that in-house reservations have active folios ready for room tariff auto-posting.',
             'status': 'PASS',
-            'count': 0,
+            'count': ops['occupied_rooms'],
             'can_auto_resolve': True,
-            'recommendation': 'All restaurant and room service checks posted to room folios.',
+            'recommendation': 'Folios will be automatically billed for room rate and tax.',
             'items': []
         })
 
-        # 5. Housekeeping Status
+        # 5. Housekeeping Room Status
         checklist.append({
-            'key': 'housekeeping_status',
-            'title': 'Housekeeping Discrepancy Alignment',
-            'description': 'Front desk room occupancy verified against housekeeping room allocations.',
+            'key': 'housekeeping_sync',
+            'title': 'Housekeeping Status Verification',
+            'description': 'Checks dirty vs clean room statuses across all inventory units.',
             'status': 'PASS',
             'count': 0,
             'can_auto_resolve': True,
@@ -263,9 +273,10 @@ class NightAuditService:
         }
 
     @classmethod
-    def get_auto_post_preview(cls, property_obj: Property, tenant: Tenant) -> dict:
+    def get_auto_post_preview(cls, property_obj: Property, tenant: Tenant, target_date: date = None) -> dict:
         """Returns itemized list of every folio that will receive charges during auto-posting."""
-        business_date = cls.get_property_business_date(property_obj)
+        property_business_date = cls.get_property_business_date(property_obj)
+        business_date = target_date or property_business_date
 
         in_house_reservations = Reservation.objects.filter(
             property=property_obj,
@@ -336,7 +347,8 @@ class NightAuditService:
         tenant: Tenant,
         user=None,
         auto_noshow: bool = True,
-        auto_close_cashiers: bool = True
+        auto_close_cashiers: bool = True,
+        target_date: date = None
     ) -> dict:
         """
         Executes the full, atomic Night Audit routine:
@@ -348,7 +360,8 @@ class NightAuditService:
         6. Advances property.business_date by +1 day
         7. Returns complete audit results
         """
-        business_date = cls.get_property_business_date(property_obj)
+        property_business_date = cls.get_property_business_date(property_obj)
+        business_date = target_date or property_business_date
         next_date = business_date + timedelta(days=1)
 
         with transaction.atomic():
@@ -470,8 +483,9 @@ class NightAuditService:
             ).aggregate(total=models.Sum('balance'))['total'] or Decimal('0.00')
 
             # 6. Advance Property Business Date
-            property_obj.business_date = next_date
-            property_obj.save(update_fields=['business_date'])
+            if next_date > property_business_date:
+                property_obj.business_date = next_date
+                property_obj.save(update_fields=['business_date'])
 
             # 7. Complete NightAuditSession
             occupied_count = in_house_reservations.count()
