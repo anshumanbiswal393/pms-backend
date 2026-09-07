@@ -179,7 +179,7 @@ class ReservationInventory(BaseModel):
     class Meta:
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(check_out_date__gt=models.F('check_in_date')),
+                condition=models.Q(check_out_date__gte=models.F('check_in_date')),
                 name='checkout_after_checkin_check'
             ),
             models.CheckConstraint(
