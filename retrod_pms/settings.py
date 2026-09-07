@@ -230,6 +230,9 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PORT = True
 
+# Allow iframe embedding for document previews across subdomains and ports
+X_FRAME_OPTIONS = 'ALLOWALL'
+
 
 # Django REST Framework Settings
 REST_FRAMEWORK = {
