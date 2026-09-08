@@ -186,7 +186,40 @@ class ReservationViewSet(viewsets.ModelViewSet):
                     arrival_date__lte=end_date,
                     departure_date__gte=start_date
                 )
-                
+        elif start_date_str:
+            start_date = parse_date(start_date_str)
+            if start_date:
+                qs = qs.filter(departure_date__gte=start_date)
+        elif end_date_str:
+            end_date = parse_date(end_date_str)
+            if end_date:
+                qs = qs.filter(arrival_date__lte=end_date)
+
+        # Search filter
+        search = q_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(
+                Q(confirmation_number__icontains=search) |
+                Q(booking_reference__icontains=search) |
+                Q(primary_guest__first_name__icontains=search) |
+                Q(primary_guest__last_name__icontains=search) |
+                Q(primary_guest__contacts__phone__icontains=search) |
+                Q(primary_guest__contacts__value__icontains=search) |
+                Q(group_block__name__icontains=search)
+            ).distinct()
+
+        # Status filter
+        status_val = q_params.get('status')
+        if status_val and status_val != 'All':
+            mapped_status = status_val.upper().replace('-', '_').replace(' ', '_')
+            qs = qs.filter(status__iexact=mapped_status)
+
+        ordering = q_params.get('ordering')
+        if ordering:
+            qs = qs.order_by(ordering)
+        else:
+            qs = qs.order_by('-created_at')
+
         return qs
 
     @extend_schema(request=PriceEstimationSerializer, responses={200: dict})
