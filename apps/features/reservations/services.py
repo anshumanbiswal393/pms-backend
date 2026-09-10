@@ -758,6 +758,13 @@ class CheckInCheckOutEngine:
         if reservation.status not in ['CONFIRMED', 'PENDING']:
             raise ValidationError("Reservation must be in CONFIRMED or PENDING state to check in.")
 
+        # Check-in date validation: guest cannot check in before scheduled arrival date
+        current_date = timezone.localdate()
+        if reservation.arrival_date and reservation.arrival_date > current_date:
+            raise ValidationError(
+                f"Guest cannot check in before the scheduled arrival date ({reservation.arrival_date.strftime('%d-%b-%Y')})."
+            )
+
         reservation.status = 'CHECKED_IN'
         reservation.save(update_fields=['status'])
 
@@ -947,6 +954,61 @@ class CheckInCheckOutEngine:
             actor_user=user
         )
         return reservation
+
+    @staticmethod
+    @transaction.atomic
+    def mark_no_show(tenant, reservation_id, user=None, reason=None):
+        reservation = Reservation.objects.get(id=reservation_id, tenant=tenant)
+        if reservation.status not in ['CONFIRMED', 'PENDING']:
+            raise ValidationError("Only Confirmed or Pending reservations can be marked as No-Show.")
+
+        reservation.status = 'NO_SHOW'
+        reservation.save(update_fields=['status'])
+
+        for alloc in reservation.room_allocations.all():
+            alloc.status = 'CANCELLED'
+            alloc.save(update_fields=['status'])
+
+        ReservationEvent.objects.create(
+            tenant=tenant,
+            reservation=reservation,
+            event_type='NO_SHOW',
+            description=f"Reservation marked as No-Show by {user.username if user and hasattr(user, 'username') else 'system'}.",
+            actor_user=user,
+            payload_diff=make_serializable({
+                'reason': reason or 'Guest did not arrive by check-in time'
+            })
+        )
+        return reservation
+
+    @classmethod
+    def auto_mark_expired_no_shows(cls, tenant, property_id=None):
+        """
+        Automatically transitions reservations whose stay has ended (departure_date < current_date)
+        and were never checked in (status IN ['CONFIRMED', 'PENDING']) to 'NO_SHOW'.
+        """
+        current_date = timezone.localdate()
+        qs = Reservation.objects.filter(
+            tenant=tenant,
+            status__in=['CONFIRMED', 'PENDING'],
+            departure_date__lt=current_date
+        )
+        if property_id:
+            qs = qs.filter(property_id=property_id)
+
+        count = 0
+        for res in qs:
+            try:
+                cls.mark_no_show(
+                    tenant=tenant,
+                    reservation_id=res.id,
+                    user=None,
+                    reason="System auto-marked as No-Show: stay departure date elapsed without check-in"
+                )
+                count += 1
+            except Exception:
+                pass
+        return count
 
 
 class ReservationModificationEngine:

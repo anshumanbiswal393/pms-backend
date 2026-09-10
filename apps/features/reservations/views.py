@@ -222,6 +222,35 @@ class ReservationViewSet(viewsets.ModelViewSet):
 
         return qs
 
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        tenant = getattr(request, 'tenant', None)
+        today = timezone.localdate()
+        if tenant and instance.status in ['CONFIRMED', 'PENDING'] and instance.departure_date and instance.departure_date < today:
+            try:
+                from apps.features.reservations.services import CheckInCheckOutEngine
+                instance = CheckInCheckOutEngine.mark_no_show(
+                    tenant=tenant,
+                    reservation_id=instance.id,
+                    user=request.user if request.user.is_authenticated else None,
+                    reason="System auto-marked as No-Show: stay departure date elapsed without check-in"
+                )
+            except Exception:
+                pass
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+    def list(self, request, *args, **kwargs):
+        tenant = getattr(request, 'tenant', None)
+        if tenant:
+            try:
+                from apps.features.reservations.services import CheckInCheckOutEngine
+                property_id = request.headers.get('X-Property-ID') or request.query_params.get('property_id')
+                CheckInCheckOutEngine.auto_mark_expired_no_shows(tenant=tenant, property_id=property_id)
+            except Exception:
+                pass
+        return super().list(request, *args, **kwargs)
+
     @extend_schema(request=PriceEstimationSerializer, responses={200: dict})
     @action(detail=False, methods=['post'], url_path='estimate')
     def estimate(self, request):
@@ -440,6 +469,27 @@ class ReservationViewSet(viewsets.ModelViewSet):
             cancellation_reason=serializer.validated_data.get('cancellation_reason'),
             user=request.user
         )
+        output = self.get_serializer(updated)
+        return Response(output.data, status=status.HTTP_200_OK)
+
+    @extend_schema(request=None, responses={200: ReservationSerializer})
+    @action(detail=True, methods=['post'], url_path='no-show')
+    def no_show(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+        try:
+            from apps.features.reservations.services import CheckInCheckOutEngine
+            updated = CheckInCheckOutEngine.mark_no_show(
+                tenant=tenant,
+                reservation_id=reservation.id,
+                user=request.user,
+                reason=request.data.get('reason')
+            )
+        except DjangoValidationError as e:
+            handle_django_validation_error(e)
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
