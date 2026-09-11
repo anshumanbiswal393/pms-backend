@@ -143,6 +143,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
             ).prefetch_related(
                 'room_allocations__inventory_unit',
                 'room_allocations__inventory_unit_type',
+                'room_allocations__guests',
                 'primary_guest__contacts',
                 'primary_guest__documents',
             )
