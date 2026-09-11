@@ -318,12 +318,13 @@ def resolve_booking_source_icon(source_name):
 class ReservationListInventorySerializer(serializers.ModelSerializer):
     unit_name = serializers.CharField(source='inventory_unit.name', read_only=True)
     unit_type_code = serializers.CharField(source='inventory_unit_type.code', read_only=True)
+    guests = ReservationGuestSerializer(many=True, read_only=True)
 
     class Meta:
         model = ReservationInventory
         fields = [
             'id', 'inventory_unit', 'inventory_unit_type', 'unit_name', 'unit_type_code',
-            'check_in_date', 'check_out_date', 'adult_count', 'child_count', 'status', 'assigned_at'
+            'check_in_date', 'check_out_date', 'adult_count', 'child_count', 'status', 'assigned_at', 'guests'
         ]
 
 
