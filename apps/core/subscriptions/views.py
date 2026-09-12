@@ -683,8 +683,8 @@ class TenantSubscriptionViewSet(viewsets.ModelViewSet):
         is_custom = serializer.validated_data.get('is_custom', False) or (plan is None)
         
         start_date = serializer.validated_data.get('start_date') or timezone.now().date()
+        cycle = serializer.validated_data.get('billing_cycle') or (plan.billing_cycle if plan else 'MONTHLY')
         if not serializer.validated_data.get('end_date'):
-            cycle = serializer.validated_data.get('billing_cycle', plan.billing_cycle if plan else 'MONTHLY')
             duration = 365 if cycle.upper() in ['YEARLY', 'ANNUAL'] else 30
             end_date = start_date + timezone.timedelta(days=duration)
         else:
@@ -693,14 +693,29 @@ class TenantSubscriptionViewSet(viewsets.ModelViewSet):
         status_val = serializer.validated_data.get('status', 'ACTIVE')
         if status_val == 'ACTIVE':
             TenantSubscription.objects.filter(tenant=tenant, status='ACTIVE').update(status='CANCELLED')
+
+        save_kwargs = {
+            'start_date': start_date,
+            'end_date': end_date,
+            'is_custom': is_custom,
+            'billing_cycle': cycle,
+        }
+
+        # If plan is present, ensure price and currency inherit directly from the SubscriptionPlan in the database
+        if plan:
+            if 'price' not in serializer.validated_data or serializer.validated_data.get('price') in [None, 0, 0.00]:
+                save_kwargs['price'] = plan.price
+            if 'currency' not in serializer.validated_data or not serializer.validated_data.get('currency'):
+                save_kwargs['currency'] = plan.currency
             
-        sub = serializer.save(start_date=start_date, end_date=end_date, is_custom=is_custom)
+        sub = serializer.save(**save_kwargs)
         
         features_data = self.request.data.get('features', [])
         if is_custom or features_data:
             sync_custom_tenant_features(tenant, sub, features_data, start_date, end_date)
         elif status_val == 'ACTIVE' and plan:
             sync_tenant_products(tenant, plan, start_date, end_date, sub.id)
+
 
     @action(detail=False, methods=['post'], url_path='custom-assign', permission_classes=[permissions.IsAdminUser])
     def custom_assign(self, request):
@@ -823,6 +838,13 @@ class TenantSubscriptionViewSet(viewsets.ModelViewSet):
 
         new_end_date = new_start_date + timezone.timedelta(days=duration_days)
 
+        # Resolve price and currency: if last_sub had 0/default price but has a plan, use plan's actual database price
+        price = last_sub.price
+        currency = last_sub.currency
+        if last_sub.plan and (price is None or float(price) == 0.0):
+            price = last_sub.plan.price
+            currency = last_sub.plan.currency
+
         with transaction.atomic():
             # Mark prior active subscriptions as renewed
             TenantSubscription.objects.filter(tenant=tenant, status='ACTIVE').update(status='RENEWED')
@@ -833,12 +855,13 @@ class TenantSubscriptionViewSet(viewsets.ModelViewSet):
                 is_custom=last_sub.is_custom,
                 custom_name=last_sub.custom_name,
                 billing_cycle=cycle,
-                price=last_sub.price,
-                currency=last_sub.currency,
+                price=price,
+                currency=currency,
                 start_date=new_start_date,
                 end_date=new_end_date,
                 status='ACTIVE'
             )
+
 
             if last_sub.is_custom:
                 # Replicate custom features

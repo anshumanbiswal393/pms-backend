@@ -155,6 +155,9 @@ class SuperadminTenantSubscriptionSerializer(serializers.ModelSerializer):
     features = TenantSubscriptionFeatureSerializer(many=True, read_only=True)
     start_date = serializers.DateField(required=False)
     end_date = serializers.DateField(required=False)
+    price = serializers.SerializerMethodField()
+    currency = serializers.SerializerMethodField()
+    billing_cycle = serializers.SerializerMethodField()
 
     class Meta:
         model = TenantSubscription
@@ -162,5 +165,27 @@ class SuperadminTenantSubscriptionSerializer(serializers.ModelSerializer):
             'id', 'tenant', 'tenant_name', 'plan', 'plan_name', 'is_custom', 'custom_name',
             'billing_cycle', 'price', 'currency', 'start_date', 'end_date', 'status', 'features'
         ]
+
+    def get_price(self, obj):
+        if obj.price is not None and float(obj.price) > 0:
+            return float(obj.price)
+        if obj.plan and obj.plan.price is not None:
+            return float(obj.plan.price)
+        return float(obj.price or 0.0)
+
+    def get_currency(self, obj):
+        if obj.currency and obj.currency.upper() != 'USD':
+            return obj.currency
+        if obj.plan and obj.plan.currency:
+            return obj.plan.currency
+        return obj.currency or 'USD'
+
+    def get_billing_cycle(self, obj):
+        if obj.billing_cycle:
+            return obj.billing_cycle
+        if obj.plan and obj.plan.billing_cycle:
+            return obj.plan.billing_cycle
+        return 'MONTHLY'
+
 
 
