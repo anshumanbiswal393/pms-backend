@@ -767,3 +767,88 @@ class TenantSubscriptionViewSet(viewsets.ModelViewSet):
 
         return Response(SuperadminTenantSubscriptionSerializer(sub).data, status=status.HTTP_201_CREATED)
 
+    @action(detail=False, methods=['post'], url_path='renew', permission_classes=[permissions.IsAdminUser])
+    def renew(self, request):
+        """
+        POST /api/subscriptions/tenant-subscriptions/renew/
+        Payload: {
+          tenant_id: UUID,
+          payment_mode_id?: UUID,
+          payment_mode_code?: str,
+          notes?: str
+        }
+        """
+        tenant_id = request.data.get('tenant_id')
+        if not tenant_id:
+            return Response({'error': 'tenant_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.core.tenants.models import Tenant
+        from apps.core.reference.models import PaymentMode
+
+        try:
+            tenant = Tenant.objects.get(id=tenant_id)
+        except Tenant.DoesNotExist:
+            return Response({'error': 'Tenant not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        payment_mode_id = request.data.get('payment_mode_id')
+        payment_mode_code = request.data.get('payment_mode_code')
+        payment_mode_obj = None
+
+        if payment_mode_id:
+            payment_mode_obj = PaymentMode.objects.filter(id=payment_mode_id, is_active=True).first()
+            if not payment_mode_obj:
+                return Response({'error': 'Selected payment mode is invalid or inactive in database.'}, status=status.HTTP_400_BAD_REQUEST)
+        elif payment_mode_code:
+            payment_mode_obj = PaymentMode.objects.filter(code__iexact=payment_mode_code, is_active=True).first()
+            if not payment_mode_obj:
+                return Response({'error': 'Selected payment mode is invalid or inactive in database.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Retrieve the most relevant subscription to renew (active first, or latest created)
+        last_sub = TenantSubscription.objects.filter(tenant=tenant, status='ACTIVE').order_by('-end_date').first()
+        if not last_sub:
+            last_sub = TenantSubscription.objects.filter(tenant=tenant).order_by('-end_date').first()
+
+        if not last_sub:
+            return Response({'error': 'No existing subscription found for this tenant to renew. Please assign a plan first.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        today = timezone.now().date()
+        cycle = (last_sub.billing_cycle or (last_sub.plan.billing_cycle if last_sub.plan else 'MONTHLY')).upper()
+        duration_days = 365 if cycle in ['YEARLY', 'ANNUAL'] else 30
+
+        # Continuous extension if current subscription is not yet expired, else starts from today
+        if last_sub.end_date and last_sub.end_date >= today:
+            new_start_date = last_sub.end_date
+        else:
+            new_start_date = today
+
+        new_end_date = new_start_date + timezone.timedelta(days=duration_days)
+
+        with transaction.atomic():
+            # Mark prior active subscriptions as renewed
+            TenantSubscription.objects.filter(tenant=tenant, status='ACTIVE').update(status='RENEWED')
+
+            new_sub = TenantSubscription.objects.create(
+                tenant=tenant,
+                plan=last_sub.plan,
+                is_custom=last_sub.is_custom,
+                custom_name=last_sub.custom_name,
+                billing_cycle=cycle,
+                price=last_sub.price,
+                currency=last_sub.currency,
+                start_date=new_start_date,
+                end_date=new_end_date,
+                status='ACTIVE'
+            )
+
+            if last_sub.is_custom:
+                # Replicate custom features
+                features_data = [
+                    {'feature_id': str(feat.product_feature_id), 'price': float(feat.price)}
+                    for feat in last_sub.features.all()
+                ]
+                sync_custom_tenant_features(tenant, new_sub, features_data, new_start_date, new_end_date)
+            elif last_sub.plan:
+                sync_tenant_products(tenant, last_sub.plan, new_start_date, new_end_date, new_sub.id)
+
+        return Response(SuperadminTenantSubscriptionSerializer(new_sub).data, status=status.HTTP_201_CREATED)
+
