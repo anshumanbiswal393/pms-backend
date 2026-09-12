@@ -170,3 +170,21 @@ class StateViewSet(viewsets.ModelViewSet):
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() in ['true', '1'])
         return queryset
+
+
+class PaymentModeViewSet(viewsets.ModelViewSet):
+    serializer_class = PaymentModeSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = PaymentMode.objects.all()
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                models.Q(name__icontains=search) | models.Q(code__icontains=search)
+            )
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() in ['true', '1'])
+        return queryset
+
