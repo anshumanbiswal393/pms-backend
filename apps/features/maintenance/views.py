@@ -81,6 +81,32 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
             )
         return qs
 
+    def perform_create(self, serializer):
+        ticket = serializer.save()
+        unit = ticket.inventory_unit
+        if unit:
+            unit.operational_status = 'maintenance'
+            unit.maintenance_status = 'active'
+            unit.status = 'BLOCKED'
+            unit.status_reason = ticket.title or ticket.description or 'Under Maintenance'
+            unit.save(update_fields=['operational_status', 'maintenance_status', 'status', 'status_reason', 'updated_at'])
+
+    def perform_destroy(self, instance):
+        unit = instance.inventory_unit
+        if unit:
+            # Check if there are other open tickets for this unit
+            other_tickets = MaintenanceTicket.objects.filter(
+                inventory_unit=unit,
+                status__in=['REPORTED', 'IN_PROGRESS', 'WAITING_PARTS']
+            ).exclude(id=instance.id)
+            if not other_tickets.exists():
+                unit.operational_status = 'operational'
+                unit.maintenance_status = 'none'
+                unit.status = 'AVAILABLE'
+                unit.status_reason = None
+                unit.save(update_fields=['operational_status', 'maintenance_status', 'status', 'status_reason', 'updated_at'])
+        instance.delete()
+
     @action(detail=False, methods=['get'])
     def stats(self, request):
         tenant = getattr(self.request, 'tenant', None)
@@ -207,7 +233,10 @@ class TicketCompleteView(APIView):
         # Set InventoryUnit maintenance status to 'none'
         unit = ticket.inventory_unit
         if unit:
+            unit.operational_status = 'operational'
             unit.maintenance_status = 'none'
-            unit.save(update_fields=['maintenance_status', 'updated_at'])
+            unit.status = 'AVAILABLE'
+            unit.status_reason = None
+            unit.save(update_fields=['operational_status', 'maintenance_status', 'status', 'status_reason', 'updated_at'])
 
         return Response(MaintenanceTicketSerializer(ticket).data, status=status.HTTP_200_OK)
