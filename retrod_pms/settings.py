@@ -120,8 +120,11 @@ import sys
 
 # Database configuration (psycopg2 for postgres, sqlite as local fallback)
 if env('DATABASE_URL'):
+    db_config = env.db()
+    db_config['CONN_MAX_AGE'] = 60
+    db_config['CONN_HEALTH_CHECKS'] = True
     DATABASES = {
-        'default': env.db()
+        'default': db_config
     }
 else:
     DATABASES = {
@@ -308,8 +311,8 @@ CACHES = {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
             'IGNORE_EXCEPTIONS': True, # Ignore exceptions when Redis is down
             'CONNECTION_POOL_KWARGS': {'max_connections': 100},
-            'SOCKET_CONNECT_TIMEOUT': 0.05, # Fail fast in 50ms if Redis is down
-            'SOCKET_TIMEOUT': 0.05,
+            'SOCKET_CONNECT_TIMEOUT': 1.0, # 1s connect timeout
+            'SOCKET_TIMEOUT': 1.0,         # 1s read/write timeout
         }
     }
 }

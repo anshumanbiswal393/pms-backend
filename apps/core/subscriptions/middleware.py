@@ -40,7 +40,15 @@ class ProductAccessMiddleware(MiddlewareMixin):
 
         # Superuser / Platform Staff ALWAYS Bypass Subscription Limits
         if user and user.is_authenticated:
-            if user.is_superuser or user.is_staff or getattr(user, 'role', None) == 'super_admin':
+            if getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False):
+                return None
+            role_slug = None
+            try:
+                if hasattr(user, '_state') and 'role' in getattr(user._state, 'fields_cache', {}):
+                    role_slug = getattr(user.role, 'code', None) or getattr(user.role, 'slug', None)
+            except Exception:
+                pass
+            if role_slug in ['super_admin', 'SUPER_ADMIN']:
                 return None
 
         # Resolve tenant

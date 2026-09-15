@@ -101,7 +101,15 @@ class ApplicationLoggingMiddleware:
         is_authenticated = bool(user and user.is_authenticated)
         user_id = str(user.id) if is_authenticated and hasattr(user, 'id') else None
         user_email = getattr(user, 'email', None) if is_authenticated else None
-        user_role = getattr(user, 'role', None) if is_authenticated else None
+        user_role = None
+        if is_authenticated:
+            try:
+                if hasattr(user, '_state') and 'role' in getattr(user._state, 'fields_cache', {}):
+                    user_role = getattr(user.role, 'name', str(user.role))
+                else:
+                    user_role = getattr(user, 'role_id', None)
+            except Exception:
+                user_role = getattr(user, 'role_id', None)
 
         # Extract Tenant & Property context
         tenant = getattr(request, 'tenant', None)
@@ -141,31 +149,37 @@ class ApplicationLoggingMiddleware:
             except Exception:
                 pass
 
-        # 1. Log to ApplicationLog Table
-        try:
-            from django.db import connection
-            if connection.connection is not None and not getattr(connection.connection, 'closed', False):
-                ApplicationLog.objects.create(
-                    request_id=getattr(request, 'request_id', uuid.uuid4()),
-                    method=request.method[:10],
-                    path=path[:512],
-                    status_code=response.status_code,
-                    duration_ms=duration_ms,
-                    ip_address=ip_address,
-                    user_agent=request.META.get('HTTP_USER_AGENT', '')[:512],
-                    tenant_id=tenant_id,
-                    property_id=str(property_id) if property_id else None,
-                    user_id=user_id,
-                    user_email=user_email[:255] if user_email else None,
-                    user_role=str(user_role)[:64] if user_role else None,
-                    is_authenticated=is_authenticated,
-                    query_params=query_params,
-                    request_body=getattr(request, '_logging_body', None),
-                    response_summary=response_summary,
-                    headers=headers,
-                )
-        except Exception as e:
-            pass
+        # 1. Log to ApplicationLog Table (Skip high-frequency polling reads to preserve DB throughput)
+        skip_logging = (
+            request.method == 'GET'
+            and response.status_code < 400
+            and path.startswith(('/api/notifications/', '/api/rates/calendar/'))
+        )
+        if not skip_logging:
+            try:
+                from django.db import connection
+                if connection.connection is not None and not getattr(connection.connection, 'closed', False):
+                    ApplicationLog.objects.create(
+                        request_id=getattr(request, 'request_id', uuid.uuid4()),
+                        method=request.method[:10],
+                        path=path[:512],
+                        status_code=response.status_code,
+                        duration_ms=duration_ms,
+                        ip_address=ip_address,
+                        user_agent=request.META.get('HTTP_USER_AGENT', '')[:512],
+                        tenant_id=tenant_id,
+                        property_id=str(property_id) if property_id else None,
+                        user_id=user_id,
+                        user_email=user_email[:255] if user_email else None,
+                        user_role=str(user_role)[:64] if user_role else None,
+                        is_authenticated=is_authenticated,
+                        query_params=query_params,
+                        request_body=getattr(request, '_logging_body', None),
+                        response_summary=response_summary,
+                        headers=headers,
+                    )
+            except Exception:
+                pass
 
         # 2. If status code is 5xx and not yet logged by process_exception, log to ErrorLog
         if response.status_code >= 500 and not getattr(request, '_error_logged', False):

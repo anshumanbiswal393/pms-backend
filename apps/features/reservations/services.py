@@ -986,7 +986,13 @@ class CheckInCheckOutEngine:
         """
         Automatically transitions reservations whose stay has ended (departure_date < current_date)
         and were never checked in (status IN ['CONFIRMED', 'PENDING']) to 'NO_SHOW'.
+        Cached to run at most once every 5 minutes per tenant.
         """
+        from django.core.cache import cache
+        cache_key = f"auto_no_show_check_{tenant.id}_{property_id or 'all'}"
+        if cache.get(cache_key):
+            return 0
+
         current_date = timezone.localdate()
         qs = Reservation.objects.filter(
             tenant=tenant,
@@ -996,19 +1002,10 @@ class CheckInCheckOutEngine:
         if property_id:
             qs = qs.filter(property_id=property_id)
 
-        count = 0
-        for res in qs:
-            try:
-                cls.mark_no_show(
-                    tenant=tenant,
-                    reservation_id=res.id,
-                    user=None,
-                    reason="System auto-marked as No-Show: stay departure date elapsed without check-in"
-                )
-                count += 1
-            except Exception:
-                pass
-        return count
+        # Bulk update in database without looping
+        updated_count = qs.update(status='NO_SHOW')
+        cache.set(cache_key, True, 300)  # 5 minutes
+        return updated_count
 
 
 class ReservationModificationEngine:

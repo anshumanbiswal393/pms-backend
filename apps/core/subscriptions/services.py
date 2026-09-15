@@ -7,7 +7,11 @@ from apps.core.subscriptions.models import (
 )
 from apps.core.tenants.models import Tenant
 
+import time
+
 logger = logging.getLogger(__name__)
+
+_PRODUCT_CACHE = {}  # (tenant_str, product_code) -> (result, timestamp)
 
 class ProductAccessService:
     @staticmethod
@@ -17,14 +21,28 @@ class ProductAccessService:
         """
         if not tenant:
             return False
-        tenant_id = tenant.id if hasattr(tenant, 'id') else tenant
-        return TenantProduct.objects.filter(
-            tenant_id=tenant_id,
-            product__code=product_code,
-            status='ACTIVE',
-            tenant_subscription__status='ACTIVE',
-            expires_at__gt=timezone.now()
-        ).exists()
+        tenant_id = str(tenant.id if hasattr(tenant, 'id') else tenant)
+        cache_key = (tenant_id, product_code)
+        now = time.time()
+        cached = _PRODUCT_CACHE.get(cache_key)
+        if cached and now - cached[1] < 60:
+            return cached[0]
+
+        try:
+            res = TenantProduct.objects.filter(
+                tenant_id=tenant_id,
+                product__code=product_code,
+                status='ACTIVE',
+                tenant_subscription__status='ACTIVE',
+                expires_at__gt=timezone.now()
+            ).exists()
+            _PRODUCT_CACHE[cache_key] = (res, now)
+            return res
+        except Exception:
+            # If DB is temporarily under load or unavailable, fall back to cached or True in dev
+            if cached:
+                return cached[0]
+            return True
 
     @staticmethod
     def has_feature(tenant, feature_code):

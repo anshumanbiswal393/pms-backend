@@ -29,6 +29,7 @@ from apps.features.reservations.services import (
     ReservationSearchEngine, ReservationEnhancementEngine
 )
 from apps.core.tenants.models import Property
+from apps.core.common.mixins import RedisCacheMixin
 
 class CorporateAccountViewSet(viewsets.ModelViewSet):
     serializer_class = CorporateAccountSerializer
@@ -120,7 +121,8 @@ def handle_django_validation_error(e):
     raise DRFValidationError(detail=msg)
 
 
-class ReservationViewSet(viewsets.ModelViewSet):
+class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
+    cache_timeout = 300  # Cache list responses for 5 minutes in Redis
     serializer_class = ReservationSerializer
     permission_classes = [HasReservationPermission]
 
@@ -139,11 +141,17 @@ class ReservationViewSet(viewsets.ModelViewSet):
             qs = Reservation.objects.filter(tenant=tenant).select_related(
                 'primary_guest',
                 'property',
-                'reservation_source'
+                'reservation_source',
+                'created_by',
+                'updated_by',
+                'corporate_account',
+                'group_block',
             ).prefetch_related(
                 'room_allocations__inventory_unit',
                 'room_allocations__inventory_unit_type',
-                'room_allocations__guests',
+                'room_allocations__rate_snapshots__rate_plan',
+                'room_allocations__guests__guest__contacts',
+                'room_allocations__guests__guest__documents',
                 'primary_guest__contacts',
                 'primary_guest__documents',
             )

@@ -36,6 +36,7 @@ class TenantResolutionMiddleware(MiddlewareMixin):
                     user = User.objects.select_related('tenant').filter(id=user_id).first()
                     if user and user.tenant:
                         tenant = user.tenant
+                        request.user = user
             except Exception:
                 pass
 
