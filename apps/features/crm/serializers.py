@@ -240,6 +240,25 @@ class GuestContactSerializer(serializers.ModelSerializer):
         if guest and guest.tenant != tenant:
             raise ValidationError("Guest must belong to the resolved tenant context.")
 
+        errors = {}
+        if not data.get('email'):
+            errors['email'] = "Email address is mandatory."
+        if not data.get('phone'):
+            errors['phone'] = "Phone / Contact number is mandatory."
+        if not data.get('address_line_1'):
+            errors['address_line_1'] = "Address Line 1 is mandatory."
+        if not data.get('country'):
+            errors['country'] = "Country is mandatory."
+        if not data.get('state'):
+            errors['state'] = "State is mandatory."
+        if not data.get('city'):
+            errors['city'] = "City is mandatory."
+        if not data.get('postal_code'):
+            errors['postal_code'] = "Pincode / Postal code is mandatory."
+
+        if errors:
+            raise ValidationError(errors)
+
         return data
 
     def create(self, validated_data):
