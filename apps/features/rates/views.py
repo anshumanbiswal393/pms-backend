@@ -98,6 +98,7 @@ class RatePlanViewSet(viewsets.ModelViewSet):
 
 class RatePlanInventoryTypeViewSet(viewsets.ModelViewSet):
     serializer_class = RatePlanInventoryTypeSerializer
+    pagination_class = None
     
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
@@ -108,7 +109,33 @@ class RatePlanInventoryTypeViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
             return RatePlanInventoryType.objects.none()
-        return RatePlanInventoryType.objects.filter(tenant=tenant)
+        qs = RatePlanInventoryType.objects.filter(tenant=tenant)
+        rate_plan = self.request.query_params.get('rate_plan')
+        inventory_unit_type = self.request.query_params.get('inventory_unit_type')
+        if rate_plan:
+            qs = qs.filter(rate_plan_id=rate_plan)
+        if inventory_unit_type:
+            qs = qs.filter(inventory_unit_type_id=inventory_unit_type)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        tenant = getattr(self.request, 'tenant', None)
+        rate_plan_id = request.data.get('rate_plan')
+        inventory_unit_type_id = request.data.get('inventory_unit_type')
+        
+        if tenant and rate_plan_id and inventory_unit_type_id:
+            existing = RatePlanInventoryType.objects.filter(
+                tenant=tenant,
+                rate_plan_id=rate_plan_id,
+                inventory_unit_type_id=inventory_unit_type_id
+            ).first()
+            if existing:
+                serializer = self.get_serializer(existing, data=request.data, partial=True)
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                return Response(serializer.data, status=status.HTTP_200_OK)
+
+        return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         serializer.save(tenant=self.request.tenant)
