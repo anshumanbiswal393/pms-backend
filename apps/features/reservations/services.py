@@ -1320,6 +1320,48 @@ class PricingEngine:
             })
             total_amount += alloc_total
             tax_amount += alloc_tax
+
+            # Extra Adult & Extra Child Calculation
+            adult_count = int(alloc.get('adult_count', 2) or 2)
+            child_count = int(alloc.get('child_count', 0) or 0)
+            base_occ = getattr(unit_type, 'base_occupancy', 2) or 2
+            extra_adults = max(0, adult_count - base_occ)
+            extra_children = max(0, child_count)
+
+            rate_plan_id = alloc.get('rate_plan_id')
+            extra_adult_rate = Decimal('0.00')
+            extra_child_rate = Decimal('0.00')
+
+            if rate_plan_id and hasattr(unit_type, 'id'):
+                try:
+                    from apps.features.rates.models import RatePlanInventoryType
+                    rpi = RatePlanInventoryType.objects.filter(
+                        rate_plan_id=rate_plan_id,
+                        inventory_unit_type_id=unit_type.id,
+                        tenant=tenant
+                    ).first()
+                    if rpi:
+                        extra_adult_rate = rpi.extra_adult_rate or Decimal('0.00')
+                        extra_child_rate = rpi.extra_child_rate or Decimal('0.00')
+                except Exception:
+                    pass
+
+            extra_adult_total = Decimal(str(extra_adults)) * extra_adult_rate * Decimal(str(night_count))
+            extra_child_total = Decimal(str(extra_children)) * extra_child_rate * Decimal(str(night_count))
+
+            if extra_adult_total > 0:
+                breakdown.append({
+                    'label': f"Extra Adult charges ({extra_adults} Adult{'s' if extra_adults > 1 else ''})",
+                    'amount': float(extra_adult_total)
+                })
+                total_amount += extra_adult_total
+
+            if extra_child_total > 0:
+                breakdown.append({
+                    'label': f"Extra Child charges ({extra_children} Child{'ren' if extra_children > 1 else ''})",
+                    'amount': float(extra_child_total)
+                })
+                total_amount += extra_child_total
             
         # Add packages
         for pkg_id in data.get('packages', []):
