@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from apps.core.reference.views import (
     CountryViewSet, NationalityViewSet, LanguageViewSet,
     CurrencyViewSet, DocumentTypeViewSet, ReservationSourceViewSet, TimezoneViewSet,
-    StateViewSet, PaymentModeViewSet
+    StateViewSet, PaymentModeViewSet, VenueViewSet, EventTypeViewSet
 )
 
 router = DefaultRouter()
@@ -16,6 +16,8 @@ router.register(r'payment-modes', PaymentModeViewSet, basename='paymentmode')
 router.register(r'document-types', DocumentTypeViewSet, basename='documenttype')
 router.register(r'reservation-sources', ReservationSourceViewSet, basename='reservationsource')
 router.register(r'timezones', TimezoneViewSet, basename='timezone')
+router.register(r'venues', VenueViewSet, basename='venue')
+router.register(r'event-types', EventTypeViewSet, basename='eventtype')
 
 urlpatterns = [
     path('', include(router.urls)),

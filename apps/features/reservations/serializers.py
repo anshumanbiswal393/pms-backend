@@ -29,10 +29,33 @@ class ReservationExtraChargeSerializer(serializers.ModelSerializer):
 
 
 class CorporateAccountSerializer(serializers.ModelSerializer):
+    rate_code = serializers.CharField(source='negotiated_rate_code', required=False, allow_blank=True)
+    negotiated_rate_code = serializers.CharField(required=False, allow_blank=True)
+
     class Meta:
         model = CorporateAccount
         fields = '__all__'
         read_only_fields = ('id', 'tenant', 'created_at', 'updated_at')
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            mutable_data = data.copy() if hasattr(data, 'copy') else dict(data)
+            # Support both negotiated_rate_code and rate_code alias
+            code_val = mutable_data.get('negotiated_rate_code') or mutable_data.get('rate_code')
+            if not code_val or not str(code_val).strip():
+                # Auto-generate from company_name if omitted
+                company = mutable_data.get('company_name') or mutable_data.get('company') or 'CORP'
+                import re, time
+                cleaned = re.sub(r'[^a-zA-Z0-9]+', '_', str(company).strip().upper()).strip('_')[:12]
+                code_val = f"CORP_{cleaned or int(time.time())}"
+            mutable_data['negotiated_rate_code'] = str(code_val).strip()
+            data = mutable_data
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['rate_code'] = instance.negotiated_rate_code
+        return ret
 
 
 class GroupBlockSerializer(serializers.ModelSerializer):

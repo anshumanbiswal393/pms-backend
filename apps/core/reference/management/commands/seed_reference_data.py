@@ -193,7 +193,33 @@ class Command(BaseCommand):
                 pass
         self.stdout.write(self.style.SUCCESS(f"Successfully seeded {state_count} states."))
 
-        # 8. Seed RBAC Permissions & Roles
+        # 9. Initial Venues
+        venues = [
+            {"code": "grand_ballroom", "name": "Grand Ballroom", "capacity": 300, "description": "Large elegant ballroom for weddings and large gatherings."},
+            {"code": "royal_banquet", "name": "Royal Banquet Hall", "capacity": 150, "description": "Medium-sized indoor hall for receptions and dinners."},
+            {"code": "executive_boardroom", "name": "Executive Boardroom", "capacity": 25, "description": "Modern boardroom with audiovisual setups."},
+            {"code": "poolside_lawn", "name": "Poolside Lawn & Deck", "capacity": 200, "description": "Open-air scenic venue by the pool."},
+            {"code": "conference_hall_a", "name": "Conference Hall A", "capacity": 80, "description": "Corporate conference and seminar hall."},
+        ]
+        from apps.core.reference.models import Venue, EventType
+        for v in venues:
+            Venue.objects.update_or_create(code=v["code"], defaults=v)
+        self.stdout.write(self.style.SUCCESS(f"Successfully seeded {len(venues)} venues."))
+
+        # 10. Initial Event Types
+        event_types = [
+            {"code": "wedding_reception", "name": "Wedding & Reception", "description": "Marriage celebrations and receptions."},
+            {"code": "corporate_conference", "name": "Corporate Conference", "description": "Business conferences, seminars, and meetings."},
+            {"code": "birthday_anniversary", "name": "Birthday & Anniversary", "description": "Personal social celebrations."},
+            {"code": "gala_dinner", "name": "Gala Dinner & Awards", "description": "Formal evening dinner parties and award ceremonies."},
+            {"code": "product_launch", "name": "Product Launch", "description": "Commercial product launches and media showcases."},
+            {"code": "social_gathering", "name": "Social Gathering", "description": "General family and community gatherings."},
+        ]
+        for et in event_types:
+            EventType.objects.update_or_create(code=et["code"], defaults=et)
+        self.stdout.write(self.style.SUCCESS(f"Successfully seeded {len(event_types)} event types."))
+
+        # 11. Seed RBAC Permissions & Roles
         try:
             from django.core.management import call_command
             call_command('seed_rbac_permissions')
@@ -201,4 +227,5 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING(f"RBAC seeding warning: {e}"))
 
         self.stdout.write(self.style.SUCCESS("Global reference data seeding completed!"))
+
 

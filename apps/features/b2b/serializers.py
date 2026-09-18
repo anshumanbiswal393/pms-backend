@@ -34,6 +34,17 @@ class B2BPartnerSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ('created_at', 'updated_at')
 
+    def validate_phone(self, value):
+        if not value:
+            return value
+        import re
+        digits = re.sub(r'\D', '', str(value))
+        if len(digits) == 12 and digits.startswith('91'):
+            digits = digits[2:]
+        if len(digits) != 10:
+            raise serializers.ValidationError("Phone number must be exactly 10 digits.")
+        return digits
+
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         

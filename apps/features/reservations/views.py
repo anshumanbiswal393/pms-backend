@@ -37,13 +37,24 @@ class CorporateAccountViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         tenant = getattr(self.request, 'tenant', None)
+        if not tenant and hasattr(self.request.user, 'tenant') and self.request.user.tenant:
+            tenant = self.request.user.tenant
+        if not tenant:
+            from apps.core.tenants.models import Tenant
+            tenant = Tenant.objects.first()
         if not tenant:
             return CorporateAccount.objects.none()
         return CorporateAccount.objects.filter(tenant=tenant)
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, 'tenant', None)
+        if not tenant and hasattr(self.request.user, 'tenant') and self.request.user.tenant:
+            tenant = self.request.user.tenant
+        if not tenant:
+            from apps.core.tenants.models import Tenant
+            tenant = Tenant.objects.first()
         serializer.save(tenant=tenant)
+
 
 
 class GroupBlockViewSet(viewsets.ModelViewSet):

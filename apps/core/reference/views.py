@@ -1,10 +1,13 @@
 from django.db import models
 from rest_framework import viewsets, permissions
-from apps.core.reference.models import Country, Nationality, Language, Currency, DocumentType, ReservationSource, Timezone, State, PaymentMode
+from apps.core.reference.models import (
+    Country, Nationality, Language, Currency, DocumentType, ReservationSource,
+    Timezone, State, PaymentMode, Venue, EventType
+)
 from apps.core.reference.serializers import (
     CountrySerializer, NationalitySerializer, LanguageSerializer,
     CurrencySerializer, DocumentTypeSerializer, ReservationSourceSerializer, TimezoneSerializer,
-    StateSerializer, PaymentModeSerializer
+    StateSerializer, PaymentModeSerializer, VenueSerializer, EventTypeSerializer
 )
 from apps.core.reference.permissions import IsSuperUserOrReadOnly
 
@@ -187,4 +190,39 @@ class PaymentModeViewSet(viewsets.ModelViewSet):
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() in ['true', '1'])
         return queryset
+
+
+class VenueViewSet(viewsets.ModelViewSet):
+    serializer_class = VenueSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = Venue.objects.all()
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                models.Q(name__icontains=search) | models.Q(code__icontains=search) | models.Q(description__icontains=search)
+            )
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() in ['true', '1'])
+        return queryset
+
+
+class EventTypeViewSet(viewsets.ModelViewSet):
+    serializer_class = EventTypeSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = EventType.objects.all()
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                models.Q(name__icontains=search) | models.Q(code__icontains=search) | models.Q(description__icontains=search)
+            )
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() in ['true', '1'])
+        return queryset
+
 
