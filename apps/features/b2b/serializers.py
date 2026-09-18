@@ -34,6 +34,30 @@ class B2BPartnerSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ('created_at', 'updated_at')
 
+    def validate_name(self, value):
+        if not value:
+            return value
+        import re
+        if re.search(r'[@!#$%^*+=<>{}[\]~`]', value):
+            raise serializers.ValidationError("Agency name contains invalid characters (@, !, #, $, %, etc.).")
+        return value.strip()
+
+    def validate_contact(self, value):
+        if not value:
+            return value
+        import re
+        if not re.match(r"^[a-zA-Z\s.'-]+$", value.strip()):
+            raise serializers.ValidationError("Contact person name must contain only letters and spaces (no numbers or special characters like Saurav12@).")
+        return value.strip()
+
+    def validate_location(self, value):
+        if not value:
+            return value
+        import re
+        if not re.match(r"^[a-zA-Z\s,.-]+$", value.strip()):
+            raise serializers.ValidationError("Location must contain only letters, spaces, commas, and dots (no numbers or special characters like Delhi123@).")
+        return value.strip()
+
     def validate_phone(self, value):
         if not value:
             return value

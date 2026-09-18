@@ -218,6 +218,22 @@ class GuestProfileSerializer(serializers.ModelSerializer):
                     
         return super().update(instance, validated_data)
 
+    def validate_first_name(self, value):
+        if not value:
+            return value
+        import re
+        if not re.match(r"^[a-zA-Z\s.'-]+$", value.strip()):
+            raise ValidationError("First name must contain only alphabetic letters, spaces, hyphens, and dots (no numbers or special characters like Saurav@12).")
+        return value.strip()
+
+    def validate_last_name(self, value):
+        if not value:
+            return value
+        import re
+        if not re.match(r"^[a-zA-Z\s.'-]+$", value.strip()):
+            raise ValidationError("Last name must contain only alphabetic letters, spaces, hyphens, and dots (no numbers or special characters like Saurav@12).")
+        return value.strip()
+
     def create(self, validated_data):
         request = self.context.get('request')
         tenant = getattr(request, 'tenant', None)
