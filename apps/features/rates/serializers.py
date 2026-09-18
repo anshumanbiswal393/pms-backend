@@ -338,13 +338,28 @@ class ServiceSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'tenant', 'created_at', 'updated_at', 'created_by', 'updated_by')
         validators = []
 
+    def to_internal_value(self, data):
+        data_copy = data.copy() if hasattr(data, 'copy') else dict(data)
+        category_val = data_copy.get('category')
+        if category_val and isinstance(category_val, str):
+            request = self.context.get('request')
+            tenant = getattr(request, 'tenant', None)
+            if tenant and len(category_val) != 36:
+                cat_obj, _ = ServiceCategory.objects.get_or_create(tenant=tenant, name=category_val)
+                data_copy['category'] = str(cat_obj.id)
+            elif not category_val or category_val.lower() in ['none', 'null', '']:
+                data_copy['category'] = None
+        elif category_val == '':
+            data_copy['category'] = None
+        return super().to_internal_value(data_copy)
+
     def validate(self, data):
         request = self.context.get('request')
         tenant = getattr(request, 'tenant', None)
         name = data.get('name')
         
         if name and tenant:
-            qs = Service.objects.filter(tenant=tenant, name=name)
+            qs = Service.objects.filter(tenant=tenant, name__iexact=name)
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():

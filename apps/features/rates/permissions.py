@@ -61,12 +61,12 @@ class IsPolicyManager(HasRatePermission):
 class IsPackageManager(HasRatePermission):
     def get_required_permission(self, request, view):
         if view.action in ['list', 'retrieve']:
-            return ['packages.view', 'services.view', 'rates.view', 'package.manage']
+            return ['packages.view', 'services.view', 'rates.view', 'package.manage', 'reservations.view', 'frontdesk.view', 'reservations.manage', 'frontdesk.manage']
         elif view.action == 'create':
-            return ['packages.create', 'services.create', 'rates.create', 'package.manage']
+            return ['packages.create', 'services.create', 'rates.create', 'package.manage', 'reservations.edit', 'reservations.create', 'reservations.manage', 'frontdesk.manage', 'frontdesk.edit']
         elif view.action in ['update', 'partial_update']:
-            return ['packages.edit', 'services.edit', 'rates.edit', 'package.manage']
+            return ['packages.edit', 'services.edit', 'rates.edit', 'package.manage', 'reservations.edit', 'reservations.manage']
         elif view.action == 'destroy':
             return ['packages.delete', 'services.delete', 'rates.delete', 'package.manage']
-        return ['packages.view', 'services.view', 'rates.view', 'package.manage']
+        return ['packages.view', 'services.view', 'rates.view', 'package.manage', 'reservations.view', 'frontdesk.view']
 
