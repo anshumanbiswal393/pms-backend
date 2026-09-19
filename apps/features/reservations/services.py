@@ -42,6 +42,23 @@ def check_room_availability(tenant, room, check_in_date, check_out_date, exclude
         if overlapping.exists():
             raise ValidationError(f"Room {room.name} is already booked or occupied for these dates.")
 
+        # Also check active group blocks
+        from apps.features.reservations.models import GroupBlock
+        active_blocks = GroupBlock.objects.filter(
+            tenant=tenant,
+            status='OPEN',
+            start_date__lt=check_out_date,
+            end_date__gt=check_in_date
+        )
+        for b in active_blocks:
+            if isinstance(b.room_selections, list):
+                for rs in b.room_selections:
+                    assigned = rs.get('assignedRooms') if isinstance(rs, dict) else []
+                    if assigned and room.name in assigned:
+                        raise ValidationError(f"Room {room.name} is currently blocked in Group '{b.name}' for these dates.")
+            if b.pickup_location and room.name in [r.strip() for r in b.pickup_location.split(',')]:
+                raise ValidationError(f"Room {room.name} is currently blocked in Group '{b.name}' for these dates.")
+
 def make_serializable(data):
     if isinstance(data, dict):
         return {k: make_serializable(v) for k, v in data.items()}

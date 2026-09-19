@@ -119,6 +119,28 @@ class GroupBlockViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, 'tenant', None)
+        data = self.request.data
+        start_date = data.get('start_date')
+        end_date = data.get('end_date')
+        room_selections = data.get('room_selections', [])
+
+        if start_date and end_date and isinstance(room_selections, list):
+            from apps.features.reservations.models import ReservationInventory
+            from apps.features.inventory.models import InventoryUnit
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            for rs in room_selections:
+                assigned_rooms = rs.get('assignedRooms', []) if isinstance(rs, dict) else []
+                for room_name in assigned_rooms:
+                    unit = InventoryUnit.objects.filter(tenant=tenant, name=room_name).first()
+                    if unit:
+                        overlapping = ReservationInventory.objects.filter(
+                            tenant=tenant,
+                            inventory_unit=unit,
+                            check_in_date__lt=end_date,
+                            check_out_date__gt=start_date
+                        ).exclude(reservation__status='CANCELLED')
+                        if overlapping.exists():
+                            raise DRFValidationError(detail=f"Room {room_name} is already booked on the selected dates ({start_date} to {end_date}).")
         serializer.save(tenant=tenant)
 
 
