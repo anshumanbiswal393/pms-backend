@@ -51,12 +51,14 @@ def check_room_availability(tenant, room, check_in_date, check_out_date, exclude
             end_date__gt=check_in_date
         )
         for b in active_blocks:
-            if isinstance(b.room_selections, list):
-                for rs in b.room_selections:
+            room_sels = getattr(b, 'room_selections', None)
+            if isinstance(room_sels, list):
+                for rs in room_sels:
                     assigned = rs.get('assignedRooms') if isinstance(rs, dict) else []
                     if assigned and room.name in assigned:
                         raise ValidationError(f"Room {room.name} is currently blocked in Group '{b.name}' for these dates.")
-            if b.pickup_location and room.name in [r.strip() for r in b.pickup_location.split(',')]:
+            pickup_loc = getattr(b, 'pickup_location', None)
+            if pickup_loc and room.name in [r.strip() for r in pickup_loc.split(',') if r.strip()]:
                 raise ValidationError(f"Room {room.name} is currently blocked in Group '{b.name}' for these dates.")
 
 def make_serializable(data):
