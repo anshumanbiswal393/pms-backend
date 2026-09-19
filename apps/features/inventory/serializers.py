@@ -284,6 +284,15 @@ class AmenitySerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('id', 'tenant', 'created_at', 'updated_at', 'created_by', 'updated_by')
 
+    def validate_name(self, value):
+        import re
+        trimmed = (value or '').strip()
+        if not trimmed:
+            raise serializers.ValidationError("Amenity name cannot be empty.")
+        if not re.match(r"^[a-zA-Z\s\-&/(),.']+$", trimmed):
+            raise serializers.ValidationError("Amenity name must contain only letters, spaces, and standard punctuation (no numbers or special characters).")
+        return trimmed
+
     def create(self, validated_data):
         request = self.context.get('request')
         user = getattr(request, 'user', None)
