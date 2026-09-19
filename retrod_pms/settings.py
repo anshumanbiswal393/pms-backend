@@ -175,6 +175,8 @@ STORAGES = {
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800  # 50MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800  # 50MB
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -302,20 +304,49 @@ DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='noreply@retrod.in')
 OTP_PROVIDER = env('OTP_PROVIDER', default='email')
 APP_BASE_URL = env('APP_BASE_URL', default='https://app.dev.retrod.in:8443')
 
-# Caching with Redis
-CACHES = {
-    'default': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': env('REDIS_URL', default='redis://127.0.0.1:6379/1'),
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            'IGNORE_EXCEPTIONS': True, # Ignore exceptions when Redis is down
-            'CONNECTION_POOL_KWARGS': {'max_connections': 100},
-            'SOCKET_CONNECT_TIMEOUT': 1.0, # 1s connect timeout
-            'SOCKET_TIMEOUT': 1.0,         # 1s read/write timeout
+# Caching with Redis & Smart In-Memory Local Fallback
+import socket
+from urllib.parse import urlparse
+
+def _check_redis_connectivity(url_str: str) -> bool:
+    try:
+        parsed = urlparse(url_str)
+        host = parsed.hostname or '127.0.0.1'
+        port = parsed.port or 6379
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.25) # Quick 250ms probe at boot
+            sock.connect((host, port))
+            return True
+    except Exception:
+        return False
+
+_configured_redis_url = env('REDIS_URL', default='redis://127.0.0.1:6379/1')
+if _check_redis_connectivity(_configured_redis_url):
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': _configured_redis_url,
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                'IGNORE_EXCEPTIONS': True,
+                'CONNECTION_POOL_KWARGS': {'max_connections': 100},
+                'SOCKET_CONNECT_TIMEOUT': 1.0,
+                'SOCKET_TIMEOUT': 1.0,
+            }
         }
     }
-}
+else:
+    # High-performance In-Memory cache fallback for local development when Redis service is not active
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'retrod-local-memory-cache',
+            'TIMEOUT': 300,
+            'OPTIONS': {
+                'MAX_ENTRIES': 2000,
+            }
+        }
+    }
 
 # Celery & Async Message Broker
 REDIS_URL = env('REDIS_URL', default='redis://127.0.0.1:6379/1')
