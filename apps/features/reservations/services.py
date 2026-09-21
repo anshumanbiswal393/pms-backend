@@ -1367,6 +1367,7 @@ class PricingEngine:
 
             extra_adult_total = Decimal(str(extra_adults)) * extra_adult_rate * Decimal(str(night_count))
             extra_child_total = Decimal(str(extra_children)) * extra_child_rate * Decimal(str(night_count))
+            custom_extra_total = Decimal(str(alloc.get('extra_charge', 0) or 0)) * Decimal(str(night_count))
 
             if extra_adult_total > 0:
                 breakdown.append({
@@ -1381,6 +1382,13 @@ class PricingEngine:
                     'amount': float(extra_child_total)
                 })
                 total_amount += extra_child_total
+
+            if custom_extra_total > 0:
+                breakdown.append({
+                    'label': "Extra Guest Charges",
+                    'amount': float(custom_extra_total)
+                })
+                total_amount += custom_extra_total
             
         # Add packages
         for pkg_id in data.get('packages', []):
@@ -1436,9 +1444,22 @@ class PricingEngine:
             'label': tax_row_label,
             'amount': float(tax_amount)
         })
+
+        # Consolidate breakdown items by label
+        consolidated_breakdown = []
+        breakdown_map = {}
+        for item in breakdown:
+            lbl = item['label']
+            amt = float(item['amount'])
+            if lbl in breakdown_map:
+                breakdown_map[lbl]['amount'] = round(breakdown_map[lbl]['amount'] + amt, 2)
+            else:
+                entry = {'label': lbl, 'amount': round(amt, 2)}
+                breakdown_map[lbl] = entry
+                consolidated_breakdown.append(entry)
         
         return {
-            'breakdown': breakdown,
+            'breakdown': consolidated_breakdown,
             'base_amount': float(total_amount),
             'tax_amount': float(tax_amount),
             'coupon_discount': float(discount_amount),
