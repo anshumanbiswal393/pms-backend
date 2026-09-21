@@ -166,12 +166,12 @@ class GuestProfileSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         request = self.context.get('request')
         if request:
-            email = request.data.get('primary_email')
-            phone = request.data.get('primary_phone')
-            address = request.data.get('primary_address')
+            email = request.data.get('primary_email') or request.data.get('email')
+            phone = request.data.get('primary_phone') or request.data.get('phone')
+            address = request.data.get('primary_address') or request.data.get('address')
             
             if email is not None or phone is not None or address is not None:
-                contact = instance.contacts.filter(is_primary=True).first()
+                contact = instance.contacts.filter(is_primary=True).first() or instance.contacts.first()
                 if contact:
                     if email is not None: contact.email = email
                     if phone is not None: contact.phone = phone
@@ -196,14 +196,18 @@ class GuestProfileSerializer(serializers.ModelSerializer):
                 doc_type = 'PASSPORT'
                 if id_type:
                     id_type_upper = id_type.upper()
-                    if 'ID' in id_type_upper or 'CARD' in id_type_upper or 'AADHAAR' in id_type_upper:
+                    if 'ID' in id_type_upper or 'CARD' in id_type_upper or 'AADHAAR' in id_type_upper or 'NATIONAL' in id_type_upper or 'VOTER' in id_type_upper or 'PAN' in id_type_upper:
                         doc_type = 'NATIONAL_ID'
                     elif 'LICENSE' in id_type_upper or 'LICENCE' in id_type_upper or 'DRIVING' in id_type_upper:
                         doc_type = 'DRIVING_LICENCE'
+                    elif 'PASSPORT' in id_type_upper:
+                        doc_type = 'PASSPORT'
                 
+                encrypted_doc_num = EncryptionHelper.encrypt(id_number) if id_number else ""
+
                 if doc:
                     if id_type is not None: doc.document_type = doc_type
-                    if id_number is not None: doc.document_number = id_number
+                    if id_number is not None: doc.document_number = encrypted_doc_num
                     if id_proof_url is not None: doc.attachment_url = id_proof_url
                     doc.save()
                 else:
@@ -211,7 +215,7 @@ class GuestProfileSerializer(serializers.ModelSerializer):
                         tenant=instance.tenant,
                         guest=instance,
                         document_type=doc_type,
-                        document_number=id_number or "",
+                        document_number=encrypted_doc_num,
                         attachment_url=id_proof_url or "",
                         is_verified=False
                     )
@@ -256,24 +260,8 @@ class GuestContactSerializer(serializers.ModelSerializer):
         if guest and guest.tenant != tenant:
             raise ValidationError("Guest must belong to the resolved tenant context.")
 
-        errors = {}
-        if not data.get('email'):
-            errors['email'] = "Email address is mandatory."
-        if not data.get('phone'):
-            errors['phone'] = "Phone / Contact number is mandatory."
-        if not data.get('address_line_1'):
-            errors['address_line_1'] = "Address Line 1 is mandatory."
-        if not data.get('country'):
-            errors['country'] = "Country is mandatory."
-        if not data.get('state'):
-            errors['state'] = "State is mandatory."
-        if not data.get('city'):
-            errors['city'] = "City is mandatory."
-        if not data.get('postal_code'):
-            errors['postal_code'] = "Pincode / Postal code is mandatory."
-
-        if errors:
-            raise ValidationError(errors)
+        if not data.get('email') and not data.get('phone'):
+            raise ValidationError({'contact': "At least email or phone is required."})
 
         return data
 

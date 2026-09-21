@@ -7,9 +7,11 @@ from django.forms.models import model_to_dict
 from apps.features.reservations.models import (
     CorporateAccount, GroupBlock, Reservation, ReservationInventory,
     ReservationRateSnapshot, ReservationGuest, ReservationEvent,
-    ReservationServiceAddon, ReservationPackage, ReservationCoupon
+    ReservationServiceAddon, ReservationPackage, ReservationCoupon,
+    ReservationExtraCharge
 )
 from apps.features.crm.models import GuestProfile, GuestContact, GuestDocument
+from apps.features.crm.services import EncryptionHelper
 from apps.features.inventory.models import InventoryUnit, InventoryUnitType
 from apps.features.rates.models import RatePlan, RatePlanVersion, Service, HospitalityPackage, Coupon, MealPlan, TenantMealPlanPrice
 
@@ -217,19 +219,22 @@ class BookingEngine:
                     address_line_1=address,
                     is_primary=True
                 )
-                if id_number:
+                id_proof_url = booking_data.get('id_proof_url') or booking_data.get('idProofUrl') or ""
+                if id_number or id_proof_url:
                     doc_type = 'PASSPORT'
                     id_type_upper = id_type.upper()
-                    if 'ID' in id_type_upper or 'CARD' in id_type_upper or 'AADHAAR' in id_type_upper:
+                    if 'ID' in id_type_upper or 'CARD' in id_type_upper or 'AADHAAR' in id_type_upper or 'NATIONAL' in id_type_upper or 'VOTER' in id_type_upper or 'PAN' in id_type_upper:
                         doc_type = 'NATIONAL_ID'
                     elif 'LICENSE' in id_type_upper or 'LICENCE' in id_type_upper or 'DRIVING' in id_type_upper:
                         doc_type = 'DRIVING_LICENCE'
 
+                    encrypted_doc_num = EncryptionHelper.encrypt(id_number) if id_number else ""
                     GuestDocument.objects.create(
                         tenant=tenant,
                         guest=primary_guest,
                         document_type=doc_type,
-                        document_number=id_number,
+                        document_number=encrypted_doc_num,
+                        attachment_url=id_proof_url,
                         is_verified=False
                     )
         
@@ -389,6 +394,15 @@ class BookingEngine:
             )
 
             # Link primary guest snapshot inside ReservationGuest
+            primary_contact = primary_guest.contacts.filter(is_primary=True).first() or primary_guest.contacts.first()
+            primary_doc = primary_guest.documents.first()
+            doc_number_plain = ""
+            if primary_doc and primary_doc.document_number:
+                try:
+                    doc_number_plain = EncryptionHelper.decrypt(primary_doc.document_number)
+                except Exception:
+                    doc_number_plain = str(primary_doc.document_number)
+
             ReservationGuest.objects.create(
                 tenant=tenant,
                 reservation_inventory=allocation,
@@ -397,8 +411,12 @@ class BookingEngine:
                 guest_snapshot={
                     'first_name': primary_guest.first_name,
                     'last_name': primary_guest.last_name,
-                    'email': primary_guest.contacts.filter(is_primary=True).first().email if primary_guest.contacts.filter(is_primary=True).exists() else None,
-                    'phone': primary_guest.contacts.filter(is_primary=True).first().phone if primary_guest.contacts.filter(is_primary=True).exists() else None,
+                    'email': primary_contact.email if primary_contact else None,
+                    'phone': primary_contact.phone if primary_contact else None,
+                    'address': f"{primary_contact.address_line_1 or ''} {primary_contact.city or ''} {primary_contact.state or ''}".strip() if primary_contact else None,
+                    'id_type': primary_doc.document_type if primary_doc else None,
+                    'id_number': doc_number_plain or None,
+                    'id_proof_url': primary_doc.attachment_url if primary_doc else None,
                 }
             )
 
@@ -483,6 +501,24 @@ class BookingEngine:
                 item_tax_amt, _ = calculate_item_tax(tenant=tenant, item_price=amount, per_night_tariff=amount, guests_count=guest_cnt)
                 tax_amount += item_tax_amt
 
+            # Handle per-allocation Extra Charge (e.g. Extra Person or custom room extra charge)
+            extra_charge_val = Decimal(str(alloc_item.get('extra_charge') or alloc_item.get('extraCharge') or 0))
+            if extra_charge_val > Decimal('0.00'):
+                desc = f"Extra Person / Room Charge ({unit_type.name})"
+                extra_tax, _ = calculate_item_tax(tenant=tenant, item_price=extra_charge_val)
+                ReservationExtraCharge.objects.create(
+                    tenant=tenant,
+                    reservation=reservation,
+                    description=desc,
+                    amount=extra_charge_val,
+                    tax_amount=extra_tax,
+                    tax_type='Excluded',
+                    tax_percent=Decimal('0.00'),
+                    date=alloc_item['check_in_date']
+                )
+                total_amount += extra_charge_val
+                tax_amount += extra_tax
+
         # Add packages
         packages = booking_data.get('packages', [])
         for pkg_id in packages:
@@ -516,6 +552,40 @@ class BookingEngine:
                 tax_amount += svc_tax_amt
             except Service.DoesNotExist:
                 continue
+
+        # Add booking-level extra charges
+        extra_charges_list = booking_data.get('extra_charges') or booking_data.get('extraCharges') or []
+        for ec in extra_charges_list:
+            if isinstance(ec, dict):
+                ec_amt = Decimal(str(ec.get('amount') or 0))
+                if ec_amt > Decimal('0.00'):
+                    ec_desc = ec.get('description') or 'Extra Charge'
+                    ec_tax_type = ec.get('taxType') or ec.get('tax_type') or 'Excluded'
+                    ec_tax_percent = Decimal(str(ec.get('taxPercent') or ec.get('tax_percent') or 0))
+                    ec_date = ec.get('date') or reservation.arrival_date
+                    
+                    if ec_tax_type == 'Excluded':
+                        if ec_tax_percent > 0:
+                            ec_tax = ec_amt * (ec_tax_percent / Decimal('100.0'))
+                        else:
+                            ec_tax, _ = calculate_item_tax(tenant=tenant, item_price=ec_amt)
+                        ec_base = ec_amt
+                    else:
+                        ec_tax = ec_amt - (ec_amt / (Decimal('1.0') + ec_tax_percent / Decimal('100.0'))) if ec_tax_percent > 0 else Decimal('0.00')
+                        ec_base = ec_amt - ec_tax
+
+                    ReservationExtraCharge.objects.create(
+                        tenant=tenant,
+                        reservation=reservation,
+                        description=ec_desc,
+                        amount=ec_base,
+                        tax_amount=ec_tax,
+                        tax_type=ec_tax_type,
+                        tax_percent=ec_tax_percent,
+                        date=ec_date
+                    )
+                    total_amount += ec_base
+                    tax_amount += ec_tax
 
         # Apply coupon
         coupon_code = booking_data.get('coupon_code') or booking_data.get('couponCode')

@@ -201,6 +201,8 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 'room_allocations__rate_snapshots',
                 'room_allocations__guests__guest__contacts',
                 'room_allocations__guests__guest__documents',
+                'primary_guest__contacts',
+                'primary_guest__documents',
                 'services',
                 'packages',
                 'extra_charges',

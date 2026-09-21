@@ -362,6 +362,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
     primary_guest_email = serializers.SerializerMethodField()
     primary_guest_id_type = serializers.SerializerMethodField()
     primary_guest_id_number = serializers.SerializerMethodField()
+    primary_guest_id_proof_url = serializers.SerializerMethodField()
     primary_guest_nationality = serializers.SerializerMethodField()
     primary_guest_tier = serializers.SerializerMethodField()
     primary_guest_city = serializers.SerializerMethodField()
@@ -388,7 +389,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
             'check_in_time', 'check_out_time', 'adults', 'children',
             'total_amount', 'tax_amount', 'discount_amount', 'paid_amount', 'balance_amount', 'grand_total',
             'primary_guest', 'primary_guest_name', 'primary_guest_phone', 'primary_guest_email',
-            'primary_guest_id_type', 'primary_guest_id_number', 'primary_guest_nationality', 'primary_guest_tier', 'primary_guest_city', 'primary_guest_address',
+            'primary_guest_id_type', 'primary_guest_id_number', 'primary_guest_id_proof_url', 'primary_guest_nationality', 'primary_guest_tier', 'primary_guest_city', 'primary_guest_address',
             'reservation_source', 'reservation_source_name', 'reservation_source_icon',
             'corporate_account', 'group_block', 'room_allocations', 'rate_plan_name', 'rate_plan_code',
             'created_by_name', 'checked_in_by_name', 'actor_name', 'created_at', 'updated_at'
@@ -450,23 +451,55 @@ class ReservationListSerializer(serializers.ModelSerializer):
         return str(total)
 
     def get_primary_guest_name(self, obj):
-        if not obj.primary_guest:
-            return "Guest"
-        return f"{obj.primary_guest.first_name} {obj.primary_guest.last_name}".strip()
+        guest = self._get_guest_obj(obj)
+        if guest:
+            return f"{guest.first_name} {guest.last_name}".strip()
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    name = rg.guest_snapshot.get('name') or f"{rg.guest_snapshot.get('first_name', '')} {rg.guest_snapshot.get('last_name', '')}".strip()
+                    if name:
+                        return name
+        except Exception:
+            pass
+        return getattr(obj, 'event_organizer_name', '') or "Guest"
 
     def get_primary_guest_phone(self, obj):
-        if not obj.primary_guest:
-            return ""
-        contacts = obj.primary_guest.contacts.all()
-        contact = contacts[0] if contacts else None
-        return contact.phone if contact and contact.phone else ""
+        guest = self._get_guest_obj(obj)
+        if guest:
+            contacts = list(guest.contacts.all()) if hasattr(guest, 'contacts') else []
+            contact = next((c for c in contacts if getattr(c, 'is_primary', False)), None) or (contacts[0] if contacts else None)
+            if contact and contact.phone:
+                return contact.phone
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    ph = rg.guest_snapshot.get('phone') or rg.guest_snapshot.get('guest_phone')
+                    if ph:
+                        return ph
+        except Exception:
+            pass
+        return getattr(obj, 'event_organizer_contact', '') or ""
 
     def get_primary_guest_email(self, obj):
-        if not obj.primary_guest:
-            return ""
-        contacts = obj.primary_guest.contacts.all()
-        contact = contacts[0] if contacts else None
-        return contact.email if contact and contact.email else ""
+        guest = self._get_guest_obj(obj)
+        if guest:
+            contacts = list(guest.contacts.all()) if hasattr(guest, 'contacts') else []
+            contact = next((c for c in contacts if getattr(c, 'is_primary', False)), None) or (contacts[0] if contacts else None)
+            if contact and contact.email:
+                return contact.email
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    em = rg.guest_snapshot.get('email') or rg.guest_snapshot.get('guest_email')
+                    if em:
+                        return em
+        except Exception:
+            pass
+        return getattr(obj, 'event_organizer_email', '') or ""
 
     def _get_guest_obj(self, obj):
         if obj.primary_guest:
@@ -484,7 +517,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
         guest = self._get_guest_obj(obj)
         if guest:
             contacts = list(guest.contacts.all()) if hasattr(guest, 'contacts') else []
-            contact = contacts[0] if contacts else None
+            contact = next((c for c in contacts if getattr(c, 'is_primary', False)), None) or (contacts[0] if contacts else None)
             if contact:
                 parts = [contact.address_line_1, contact.address_line_2, contact.city, contact.state, contact.country]
                 res = ", ".join([p for p in parts if p])
@@ -500,7 +533,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
                         return addr
         except Exception:
             pass
-        return ""
+        return getattr(obj, 'event_organizer_billing_address', '') or ""
 
     def get_primary_guest_id_type(self, obj):
         guest = self._get_guest_obj(obj)
@@ -537,6 +570,24 @@ class ReservationListSerializer(serializers.ModelSerializer):
                     id_n = rg.guest_snapshot.get('id_number') or rg.guest_snapshot.get('document_number')
                     if id_n:
                         return id_n
+        except Exception:
+            pass
+        return ""
+
+    def get_primary_guest_id_proof_url(self, obj):
+        guest = self._get_guest_obj(obj)
+        if guest:
+            docs = list(guest.documents.all()) if hasattr(guest, 'documents') else []
+            doc = docs[0] if docs else None
+            if doc and doc.attachment_url:
+                return doc.attachment_url
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    u = rg.guest_snapshot.get('id_proof_url') or rg.guest_snapshot.get('attachment_url')
+                    if u:
+                        return u
         except Exception:
             pass
         return ""
@@ -580,6 +631,7 @@ class ReservationSerializer(serializers.ModelSerializer):
     primary_guest_address = serializers.SerializerMethodField()
     primary_guest_id_type = serializers.SerializerMethodField()
     primary_guest_id_number = serializers.SerializerMethodField()
+    primary_guest_id_proof_url = serializers.SerializerMethodField()
     primary_guest_nationality = serializers.SerializerMethodField()
     primary_guest_tier = serializers.SerializerMethodField()
     primary_guest_city = serializers.SerializerMethodField()
@@ -659,29 +711,61 @@ class ReservationSerializer(serializers.ModelSerializer):
         return None
 
     def get_primary_guest_name(self, obj):
-        if not obj.primary_guest:
-            return "Guest"
-        return f"{obj.primary_guest.first_name} {obj.primary_guest.last_name}".strip()
+        guest = self._get_guest_obj(obj)
+        if guest:
+            return f"{guest.first_name} {guest.last_name}".strip()
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    name = rg.guest_snapshot.get('name') or f"{rg.guest_snapshot.get('first_name', '')} {rg.guest_snapshot.get('last_name', '')}".strip()
+                    if name:
+                        return name
+        except Exception:
+            pass
+        return getattr(obj, 'event_organizer_name', '') or "Guest"
 
     def get_primary_guest_phone(self, obj):
-        if not obj.primary_guest:
-            return ""
-        contacts = obj.primary_guest.contacts.all()
-        contact = contacts[0] if contacts else None
-        return contact.phone if contact and contact.phone else ""
+        guest = self._get_guest_obj(obj)
+        if guest:
+            contacts = list(guest.contacts.all()) if hasattr(guest, 'contacts') else []
+            contact = next((c for c in contacts if getattr(c, 'is_primary', False)), None) or (contacts[0] if contacts else None)
+            if contact and contact.phone:
+                return contact.phone
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    ph = rg.guest_snapshot.get('phone') or rg.guest_snapshot.get('guest_phone')
+                    if ph:
+                        return ph
+        except Exception:
+            pass
+        return getattr(obj, 'event_organizer_contact', '') or ""
 
     def get_primary_guest_email(self, obj):
-        if not obj.primary_guest:
-            return ""
-        contacts = obj.primary_guest.contacts.all()
-        contact = contacts[0] if contacts else None
-        return contact.email if contact and contact.email else ""
+        guest = self._get_guest_obj(obj)
+        if guest:
+            contacts = list(guest.contacts.all()) if hasattr(guest, 'contacts') else []
+            contact = next((c for c in contacts if getattr(c, 'is_primary', False)), None) or (contacts[0] if contacts else None)
+            if contact and contact.email:
+                return contact.email
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    em = rg.guest_snapshot.get('email') or rg.guest_snapshot.get('guest_email')
+                    if em:
+                        return em
+        except Exception:
+            pass
+        return getattr(obj, 'event_organizer_email', '') or ""
 
     def get_primary_guest_address(self, obj):
         guest = self._get_guest_obj(obj)
         if guest:
             contacts = list(guest.contacts.all()) if hasattr(guest, 'contacts') else []
-            contact = contacts[0] if contacts else None
+            contact = next((c for c in contacts if getattr(c, 'is_primary', False)), None) or (contacts[0] if contacts else None)
             if contact:
                 parts = [contact.address_line_1, contact.address_line_2, contact.city, contact.state, contact.country]
                 res = ", ".join([p for p in parts if p])
@@ -697,7 +781,7 @@ class ReservationSerializer(serializers.ModelSerializer):
                         return addr
         except Exception:
             pass
-        return ""
+        return getattr(obj, 'event_organizer_billing_address', '') or ""
 
     def get_primary_guest_id_type(self, obj):
         guest = self._get_guest_obj(obj)
@@ -734,6 +818,24 @@ class ReservationSerializer(serializers.ModelSerializer):
                     id_n = rg.guest_snapshot.get('id_number') or rg.guest_snapshot.get('document_number')
                     if id_n:
                         return id_n
+        except Exception:
+            pass
+        return ""
+
+    def get_primary_guest_id_proof_url(self, obj):
+        guest = self._get_guest_obj(obj)
+        if guest:
+            docs = list(guest.documents.all()) if hasattr(guest, 'documents') else []
+            doc = docs[0] if docs else None
+            if doc and doc.attachment_url:
+                return doc.attachment_url
+        try:
+            for alloc in obj.room_allocations.all():
+                rg = alloc.guests.first()
+                if rg and rg.guest_snapshot:
+                    u = rg.guest_snapshot.get('id_proof_url') or rg.guest_snapshot.get('attachment_url')
+                    if u:
+                        return u
         except Exception:
             pass
         return ""
@@ -787,6 +889,8 @@ class CreateBookingSerializer(serializers.Serializer):
     nationality = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     idType = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     idNumber = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    id_proof_url = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    idProofUrl = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     source = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     dynamicPricingPct = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
@@ -796,6 +900,8 @@ class CreateBookingSerializer(serializers.Serializer):
     )
 
     # Extra Items
+    extra_charges = serializers.ListField(child=serializers.JSONField(), required=False, default=list)
+    extraCharges = serializers.ListField(child=serializers.JSONField(), required=False, default=list)
     packages = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
     services = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
     coupon_code = serializers.CharField(required=False, allow_blank=True, allow_null=True)
