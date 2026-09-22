@@ -580,12 +580,27 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         if not alloc:
             return Response({'error': 'No room allocation found on this reservation.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        full_name = request.data.get('fullName') or request.data.get('name') or ''
-        parts = full_name.strip().split(' ', 1)
+        full_name = (request.data.get('fullName') or request.data.get('name') or '').strip()
+        if not full_name:
+            return Response({'error': 'Guest Full Name is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        import re
+        if not re.match(r"^[a-zA-Z\s.'\-\u00C0-\u024F\u1E00-\u1EFF]+$", full_name):
+            return Response({'error': 'Guest Full Name cannot contain special characters or numbers.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        parts = full_name.split(' ', 1)
         first_name = parts[0] if parts else 'Guest'
         last_name = parts[1] if len(parts) > 1 else ''
         email = request.data.get('email', '').strip()
         phone = request.data.get('phone', '').strip()
+
+        if phone:
+            digits_only = re.sub(r'\D', '', phone)
+            if not phone.startswith('+') and len(digits_only) > 10:
+                return Response({'error': 'Phone number cannot exceed 10 digits.'}, status=status.HTTP_400_BAD_REQUEST)
+            elif len(digits_only) > 15:
+                return Response({'error': 'Phone number cannot exceed 15 digits.'}, status=status.HTTP_400_BAD_REQUEST)
+
         address = request.data.get('address', '').strip()
         id_type = request.data.get('idType') or request.data.get('id_type') or 'NATIONAL_ID'
         id_number = request.data.get('idNumber') or request.data.get('id_number') or ''

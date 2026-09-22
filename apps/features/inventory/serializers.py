@@ -45,6 +45,12 @@ class InventoryUnitTypeSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         tenant = getattr(request, 'tenant', None)
         
+        name = data.get('name')
+        if name:
+            import re
+            if not re.match(r"^[a-zA-Z0-9\s\-&.,'()]+$", name.strip()):
+                raise ValidationError({"name": "Room Type Name cannot contain special characters (such as @, #, $, %, ^, *, etc.)."})
+
         prop = data.get('property')
         if prop and prop.tenant != tenant:
             raise ValidationError("Property must belong to the resolved tenant context.")
