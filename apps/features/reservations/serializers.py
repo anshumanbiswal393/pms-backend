@@ -379,6 +379,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
     rate_plan_code = serializers.SerializerMethodField()
 
     property_business_date = serializers.SerializerMethodField()
+    checked_in_by_name = serializers.SerializerMethodField()
     reservation_number = serializers.CharField(source='confirmation_number', read_only=True)
     confirmation_code = serializers.CharField(source='confirmation_number', read_only=True)
 
