@@ -263,3 +263,21 @@ class UnifiedSendEmailView(APIView):
             return Response(res, status=status.HTTP_200_OK)
         return Response(res, status=status.HTTP_400_BAD_REQUEST)
 
+
+from django.http import FileResponse, Http404
+from django.conf import settings
+import os
+import mimetypes
+
+class MediaFileServeView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, path):
+        clean_path = os.path.normpath(path).lstrip(r'\/')
+        file_path = os.path.join(settings.MEDIA_ROOT, clean_path)
+        if not os.path.exists(file_path) or not os.path.isfile(file_path):
+            raise Http404("Media file not found")
+        
+        content_type, _ = mimetypes.guess_type(file_path)
+        return FileResponse(open(file_path, 'rb'), content_type=content_type or 'application/octet-stream')
+

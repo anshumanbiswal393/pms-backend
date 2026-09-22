@@ -233,6 +233,11 @@ urlpatterns = [
 
 from django.conf import settings
 from django.conf.urls.static import static
+from django.urls import re_path
+from apps.core.common.views import MediaFileServeView
 
-urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+urlpatterns += [
+    re_path(r'^media/(?P<path>.*)$', MediaFileServeView.as_view(), name='media_serve'),
+    re_path(r'^api/media/(?P<path>.*)$', MediaFileServeView.as_view(), name='api_media_serve'),
+]
 
