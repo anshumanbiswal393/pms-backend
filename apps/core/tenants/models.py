@@ -1,7 +1,7 @@
 import uuid
 import random
 from django.db import models
-from django.utils.timezone import now as django_now
+from django.utils.timezone import now as django_now, localdate as django_today
 from apps.core.common.models import BaseModel
 
 def generate_hotel_id():
@@ -86,7 +86,7 @@ class Property(BaseModel):
     luxury_tax = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
     
     amenities = models.JSONField(default=list, blank=True)
-    business_date = models.DateField(default=django_now, null=True, blank=True)
+    business_date = models.DateField(default=django_today, null=True, blank=True)
     subscription_end_date = models.DateField(null=True, blank=True)
     booking_engine_settings = models.JSONField(default=dict, blank=True)
 
