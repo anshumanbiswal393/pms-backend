@@ -1,6 +1,7 @@
 from django.db import models
 from django.utils import timezone
 from django.core.exceptions import ValidationError
+import random
 from apps.core.common.models import BaseModel, BaseManager, BaseQuerySet
 from apps.core.tenants.models import Tenant, Property
 from apps.features.crm.models import GuestProfile
@@ -12,6 +13,10 @@ from django.conf import settings
 from apps.features.availability.models import (
     GroupBlock, GROUP_BLOCK_TYPE_CHOICES, GROUP_BLOCK_STATUS_CHOICES
 )
+
+def generate_reservation_id():
+    """Generates a random, non-sequential 6-digit reservation ID string."""
+    return str(random.randint(100000, 999999))
 
 RESERVATION_STATUS_CHOICES = (
     ('INQUIRY', 'Inquiry'),
@@ -135,6 +140,12 @@ class Reservation(BaseModel):
         return f"{self.confirmation_number} - {self.primary_guest.first_name} {self.primary_guest.last_name}"
 
     def save(self, *args, **kwargs):
+        if not self.confirmation_number:
+            while True:
+                candidate = generate_reservation_id()
+                if not Reservation.objects.filter(confirmation_number=candidate).exists():
+                    self.confirmation_number = candidate
+                    break
         is_new = self._state.adding
         super().save(*args, **kwargs)
         if not is_new:

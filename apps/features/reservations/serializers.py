@@ -374,17 +374,18 @@ class ReservationListSerializer(serializers.ModelSerializer):
     adults = serializers.SerializerMethodField()
     children = serializers.SerializerMethodField()
     created_by_name = serializers.SerializerMethodField()
-    checked_in_by_name = serializers.SerializerMethodField()
     actor_name = serializers.SerializerMethodField()
     rate_plan_name = serializers.SerializerMethodField()
     rate_plan_code = serializers.SerializerMethodField()
 
     property_business_date = serializers.SerializerMethodField()
+    reservation_number = serializers.CharField(source='confirmation_number', read_only=True)
+    confirmation_code = serializers.CharField(source='confirmation_number', read_only=True)
 
     class Meta:
         model = Reservation
         fields = [
-            'id', 'property', 'property_name', 'property_business_date', 'confirmation_number', 'booking_reference', 'status', 'reservation_type',
+            'id', 'property', 'property_name', 'property_business_date', 'confirmation_number', 'reservation_number', 'confirmation_code', 'booking_reference', 'status', 'reservation_type',
             'market_segment', 'booking_date', 'arrival_date', 'departure_date',
             'check_in_time', 'check_out_time', 'adults', 'children',
             'total_amount', 'tax_amount', 'discount_amount', 'paid_amount', 'balance_amount', 'grand_total',
@@ -638,10 +639,11 @@ class ReservationSerializer(serializers.ModelSerializer):
     reservation_source_name = serializers.CharField(source='reservation_source.name', read_only=True)
     reservation_source_icon = serializers.SerializerMethodField()
     grand_total = serializers.SerializerMethodField()
-    property_business_date = serializers.SerializerMethodField()
     created_by_name = serializers.SerializerMethodField()
     checked_in_by_name = serializers.SerializerMethodField()
     actor_name = serializers.SerializerMethodField()
+    reservation_number = serializers.CharField(source='confirmation_number', read_only=True)
+    confirmation_code = serializers.CharField(source='confirmation_number', read_only=True)
 
     class Meta:
         model = Reservation

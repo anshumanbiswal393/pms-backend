@@ -128,7 +128,10 @@ def calculate_item_tax(tenant, item_price, per_night_tariff=None, guests_count=1
 class BookingEngine:
     @staticmethod
     def generate_confirmation_number():
-        return f"RET-{uuid.uuid4().hex[:8].upper()}"
+        while True:
+            candidate = str(random.randint(100000, 999999))
+            if not Reservation.objects.filter(confirmation_number=candidate).exists():
+                return candidate
 
     @classmethod
     @transaction.atomic
