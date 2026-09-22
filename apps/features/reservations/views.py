@@ -255,8 +255,13 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         # Status filter
         status_val = q_params.get('status')
         if status_val and status_val != 'All':
-            mapped_status = status_val.upper().replace('-', '_').replace(' ', '_')
-            qs = qs.filter(status__iexact=mapped_status)
+            if ',' in status_val:
+                statuses = [s.strip().upper().replace('-', '_').replace(' ', '_') for s in status_val.split(',') if s.strip()]
+                if statuses:
+                    qs = qs.filter(status__in=statuses)
+            else:
+                mapped_status = status_val.upper().replace('-', '_').replace(' ', '_')
+                qs = qs.filter(status__iexact=mapped_status)
 
         ordering = q_params.get('ordering')
         if ordering:
