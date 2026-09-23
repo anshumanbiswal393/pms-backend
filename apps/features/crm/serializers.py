@@ -46,21 +46,21 @@ class GuestProfileSerializer(serializers.ModelSerializer):
         return full_name or "Unnamed Guest"
 
     def get_primary_email(self, obj):
-        primary_contact = obj.contacts.filter(is_primary=True).first()
+        primary_contact = obj.contacts.filter(is_primary=True).first() or obj.contacts.first()
         return primary_contact.email if primary_contact else ""
 
     def get_email(self, obj):
         return self.get_primary_email(obj)
 
     def get_primary_phone(self, obj):
-        primary_contact = obj.contacts.filter(is_primary=True).first()
+        primary_contact = obj.contacts.filter(is_primary=True).first() or obj.contacts.first()
         return primary_contact.phone if primary_contact else ""
 
     def get_phone(self, obj):
         return self.get_primary_phone(obj)
 
     def get_primary_address(self, obj):
-        primary_contact = obj.contacts.filter(is_primary=True).first()
+        primary_contact = obj.contacts.filter(is_primary=True).first() or obj.contacts.first()
         if primary_contact:
             parts = [primary_contact.address_line_1, primary_contact.address_line_2, primary_contact.city, primary_contact.state, primary_contact.country]
             return ", ".join([p for p in parts if p])
@@ -70,7 +70,7 @@ class GuestProfileSerializer(serializers.ModelSerializer):
         return self.get_primary_address(obj)
 
     def get_country(self, obj):
-        primary_contact = obj.contacts.filter(is_primary=True).first()
+        primary_contact = obj.contacts.filter(is_primary=True).first() or obj.contacts.first()
         if primary_contact and primary_contact.country:
             return primary_contact.country
         return obj.nationality or "India"

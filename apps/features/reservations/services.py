@@ -176,6 +176,50 @@ class BookingEngine:
         # Resolve Primary Guest (either lookup by UUID or create inline)
         if booking_data.get('primary_guest_id'):
             primary_guest = GuestProfile.objects.get(id=booking_data['primary_guest_id'], tenant=tenant)
+            phone = (booking_data.get('phone') or booking_data.get('event_organizer_contact') or '').strip()
+            email = (booking_data.get('email') or booking_data.get('event_organizer_email') or '').strip()
+            address = (booking_data.get('address') or booking_data.get('event_organizer_billing_address') or '').strip()
+            id_type = booking_data.get('idType') or "PASSPORT"
+            id_number = (booking_data.get('idNumber') or '').strip()
+            id_proof_url = booking_data.get('id_proof_url') or booking_data.get('idProofUrl') or ""
+
+            if phone or email or address:
+                contact = primary_guest.contacts.filter(is_primary=True).first() or primary_guest.contacts.first()
+                if contact:
+                    if phone and phone not in ['+91-', '+91', '0000000000']:
+                        contact.phone = phone
+                    if email and email != 'guest@example.com':
+                        contact.email = email
+                    if address and address != 'Address':
+                        contact.address_line_1 = address
+                    contact.save()
+                elif phone or email:
+                    GuestContact.objects.create(
+                        tenant=tenant,
+                        guest=primary_guest,
+                        email=email or 'guest@example.com',
+                        phone=phone or '0000000000',
+                        address_line_1=address or '',
+                        is_primary=True
+                    )
+            if id_number or id_proof_url:
+                doc = primary_guest.documents.first()
+                if not doc:
+                    doc_type = 'PASSPORT'
+                    id_type_upper = id_type.upper()
+                    if any(kw in id_type_upper for kw in ['ID', 'CARD', 'AADHAAR', 'NATIONAL', 'VOTER', 'PAN']):
+                        doc_type = 'NATIONAL_ID'
+                    elif any(kw in id_type_upper for kw in ['LICENSE', 'LICENCE', 'DRIVING']):
+                        doc_type = 'DRIVING_LICENCE'
+                    encrypted_doc_num = EncryptionHelper.encrypt(id_number) if id_number else ""
+                    GuestDocument.objects.create(
+                        tenant=tenant,
+                        guest=primary_guest,
+                        document_type=doc_type,
+                        document_number=encrypted_doc_num,
+                        attachment_url=id_proof_url,
+                        is_verified=False
+                    )
         else:
             full_name = booking_data.get('fullName') or booking_data.get('event_organizer_name') or "Inline Guest"
             email = booking_data.get('email') or booking_data.get('event_organizer_email') or ""
@@ -412,8 +456,10 @@ class BookingEngine:
                 guest=primary_guest,
                 is_primary=True,
                 guest_snapshot={
+                    'name': f"{primary_guest.first_name or ''} {primary_guest.last_name or ''}".strip(),
                     'first_name': primary_guest.first_name,
                     'last_name': primary_guest.last_name,
+                    'type': 'Primary',
                     'email': primary_contact.email if primary_contact else None,
                     'phone': primary_contact.phone if primary_contact else None,
                     'address': f"{primary_contact.address_line_1 or ''} {primary_contact.city or ''} {primary_contact.state or ''}".strip() if primary_contact else None,
@@ -422,6 +468,77 @@ class BookingEngine:
                     'id_proof_url': primary_doc.attachment_url if primary_doc else None,
                 }
             )
+
+            # Persist additional / accompanying guests for this allocation
+            add_guests = booking_data.get('additional_guests') or booking_data.get('additionalGuests') or []
+            for g_item in add_guests:
+                if not isinstance(g_item, dict):
+                    continue
+                g_name = (g_item.get('name') or g_item.get('fullName') or '').strip()
+                if not g_name:
+                    continue
+                g_type = g_item.get('type') or g_item.get('guest_type') or 'Adult'
+                g_age = str(g_item.get('age') or '')
+                g_gender = g_item.get('gender') or ''
+                g_id_type = g_item.get('idType') or g_item.get('id_type') or 'NATIONAL_ID'
+                g_id_number = (g_item.get('idNumber') or g_item.get('id_number') or '').strip()
+                g_id_url = g_item.get('idProofUrl') or g_item.get('id_proof_url') or ''
+                g_phone = (g_item.get('phone') or '').strip()
+                g_email = (g_item.get('email') or '').strip()
+
+                parts = g_name.split(' ', 1)
+                g_first = parts[0]
+                g_last = parts[1] if len(parts) > 1 else 'Guest'
+
+                sec_guest = None
+                try:
+                    sec_guest = GuestProfile.objects.create(
+                        tenant=tenant,
+                        first_name=g_first,
+                        last_name=g_last,
+                        guest_type='DOMESTIC'
+                    )
+                    if g_phone or g_email:
+                        GuestContact.objects.create(
+                            tenant=tenant,
+                            guest=sec_guest,
+                            phone=g_phone or '0000000000',
+                            email=g_email or '',
+                            is_primary=True
+                        )
+                    if g_id_number:
+                        enc_doc = EncryptionHelper.encrypt(g_id_number)
+                        doc_t = 'PASSPORT' if 'PASSPORT' in g_id_type.upper() else 'DRIVING_LICENCE' if any(k in g_id_type.upper() for k in ['DRIV', 'LICEN']) else 'NATIONAL_ID'
+                        GuestDocument.objects.create(
+                            tenant=tenant,
+                            guest=sec_guest,
+                            document_type=doc_t,
+                            document_number=enc_doc,
+                            attachment_url=g_id_url,
+                            is_verified=False
+                        )
+                except Exception as ex:
+                    logger.warning(f"Failed to create secondary guest profile: {ex}")
+
+                ReservationGuest.objects.create(
+                    tenant=tenant,
+                    reservation_inventory=allocation,
+                    guest=sec_guest,
+                    is_primary=False,
+                    guest_snapshot={
+                        'name': g_name,
+                        'first_name': g_first,
+                        'last_name': g_last,
+                        'type': g_type,
+                        'age': g_age,
+                        'gender': g_gender,
+                        'phone': g_phone,
+                        'email': g_email,
+                        'id_type': g_id_type,
+                        'id_number': g_id_number,
+                        'id_proof_url': g_id_url,
+                    }
+                )
 
             # Create daily rate snapshots
             rate_plan = RatePlan.objects.get(id=alloc_item['rate_plan_id'], tenant=tenant)
@@ -1131,6 +1248,290 @@ class ReservationModificationEngine:
                 }
             })
         )
+        return reservation
+
+    @staticmethod
+    @transaction.atomic
+    def amend_stay(tenant, reservation_id, new_departure_date, new_arrival_date=None, user=None):
+        """
+        Amends/extends reservation stay dates.
+        Recalculates nightly rates, extra guest charges, and per-night taxes (GST).
+        Generates or removes ReservationRateSnapshot records for newly added or removed dates.
+        Updates reservation.departure_date, room_allocations check_out_date, total_amount, tax_amount, balance_amount.
+        Updates or creates GuestFolio and posts FolioTransaction records for the amended nights.
+        """
+        from datetime import datetime, timedelta
+        from decimal import Decimal
+        from apps.features.reservations.models import Reservation, ReservationRateSnapshot, ReservationExtraCharge, ReservationEvent
+        from apps.features.front_office.models import GuestFolio, FolioTransaction
+
+        reservation = Reservation.objects.get(id=reservation_id, tenant=tenant)
+        old_dep = reservation.departure_date
+        old_arr = reservation.arrival_date
+
+        if isinstance(new_departure_date, str):
+            new_dep = datetime.strptime(new_departure_date.split('T')[0], '%Y-%m-%d').date()
+        else:
+            new_dep = new_departure_date
+
+        if new_arrival_date:
+            if isinstance(new_arrival_date, str):
+                new_arr = datetime.strptime(new_arrival_date.split('T')[0], '%Y-%m-%d').date()
+            else:
+                new_arr = new_arrival_date
+        else:
+            new_arr = old_arr
+
+        if new_dep <= new_arr:
+            raise ValidationError("New departure date must be strictly after the arrival date.")
+
+        allocations = list(reservation.room_allocations.all())
+
+        # Check room availability if extending stay and room is assigned
+        for alloc in allocations:
+            if alloc.inventory_unit and new_dep > alloc.check_out_date:
+                check_room_availability(
+                    tenant=tenant,
+                    room=alloc.inventory_unit,
+                    check_in_date=alloc.check_out_date,
+                    check_out_date=new_dep,
+                    exclude_allocation_id=alloc.id
+                )
+
+        # Update allocations check-in & check-out dates
+        for alloc in allocations:
+            alloc.check_in_date = new_arr
+            alloc.check_out_date = new_dep
+            alloc.save(update_fields=['check_in_date', 'check_out_date'])
+
+        # Find or create GuestFolio for this reservation
+        folio = GuestFolio.objects.filter(reservation=reservation, tenant=tenant).first()
+        if not folio:
+            try:
+                conf_prefix = str(reservation.confirmation_number or reservation.id)[:8]
+                folio_num = f"FOL-{conf_prefix}"
+                folio = GuestFolio.objects.create(
+                    tenant=tenant,
+                    reservation=reservation,
+                    folio_number=folio_num,
+                    status='OPEN',
+                    total_charges=Decimal('0.00'),
+                    total_payments=Decimal(str(reservation.paid_amount or '0.00')),
+                    balance=Decimal('0.00')
+                )
+            except Exception:
+                folio = None
+
+        newly_added_charges = []
+
+        # Process each allocation's snapshots
+        for alloc in allocations:
+            unit_type = alloc.inventory_unit_type
+            guest_cnt = (alloc.adult_count or 1) + (alloc.child_count or 0)
+            existing_snaps = {s.date: s for s in alloc.rate_snapshots.all()}
+
+            # If shortening stay: delete snapshots falling outside the new range
+            for s_date, snap in list(existing_snaps.items()):
+                if s_date < new_arr or s_date >= new_dep:
+                    snap.delete()
+                    del existing_snaps[s_date]
+
+            # Resolve template rate plan and nightly base rate from existing snapshots
+            ref_snap = alloc.rate_snapshots.first()
+            if ref_snap:
+                rate_plan = ref_snap.rate_plan
+                rate_version = ref_snap.rate_plan_version
+                nightly_rate = ref_snap.amount_charged
+                policy_snapshot = ref_snap.policy_snapshot
+                rate_snapshot_tmpl = dict(ref_snap.rate_snapshot or {})
+            else:
+                from apps.features.rates.models import RatePlan, RatePlanInventory
+                rate_plan = RatePlan.objects.filter(tenant=tenant).first()
+                rate_version = rate_plan.versions.first() if rate_plan else None
+                # lookup base rate from inventory
+                rpi = RatePlanInventory.objects.filter(tenant=tenant, inventory_unit_type=unit_type).first()
+                nightly_rate = Decimal(str(rpi.base_rate if rpi and rpi.base_rate else (unit_type.base_price or '2000.00')))
+                policy_snapshot = {}
+                rate_snapshot_tmpl = {
+                    'rate_plan_code': rate_plan.code if rate_plan else 'BAR',
+                    'rate_plan_name': rate_plan.name if rate_plan else 'Best Available Rate',
+                    'amount': str(nightly_rate),
+                }
+
+            # Calculate extra guest nightly charge for this allocation
+            base_occ = getattr(unit_type, 'base_occupancy', 2) or 2
+            extra_adults = max(0, (alloc.adult_count or 1) - base_occ)
+            extra_nightly_charge = Decimal('0.00')
+            if extra_adults > 0:
+                extra_adult_rate = getattr(unit_type, 'extra_adult_price', None) or getattr(unit_type, 'extra_adult_charge', None) or Decimal('500.00')
+                extra_nightly_charge = Decimal(str(extra_adult_rate)) * extra_adults
+
+            # Iterate every night of the stay
+            curr_d = new_arr
+            while curr_d < new_dep:
+                if curr_d not in existing_snaps:
+                    # Create missing snapshot for newly added date
+                    snap_data = dict(rate_snapshot_tmpl)
+                    snap_data['amount'] = str(nightly_rate)
+
+                    new_snap = ReservationRateSnapshot.objects.create(
+                        tenant=tenant,
+                        reservation_inventory=alloc,
+                        date=curr_d,
+                        rate_plan=rate_plan,
+                        rate_plan_version=rate_version,
+                        amount_charged=nightly_rate,
+                        rate_snapshot=snap_data,
+                        policy_snapshot=policy_snapshot
+                    )
+                    existing_snaps[curr_d] = new_snap
+
+                    # Compute nightly tax
+                    night_tax, tax_lbl = calculate_item_tax(
+                        tenant=tenant,
+                        item_price=nightly_rate,
+                        per_night_tariff=nightly_rate,
+                        guests_count=guest_cnt
+                    )
+
+                    newly_added_charges.append({
+                        'date': curr_d,
+                        'desc': f"Room Charge ({unit_type.name})",
+                        'amount': nightly_rate,
+                        'tax': night_tax,
+                        'tax_lbl': tax_lbl
+                    })
+
+                    # If extra adult charge applies, add nightly extra charge
+                    if extra_nightly_charge > Decimal('0.00'):
+                        extra_tax, _ = calculate_item_tax(tenant=tenant, item_price=extra_nightly_charge)
+                        ReservationExtraCharge.objects.create(
+                            tenant=tenant,
+                            reservation=reservation,
+                            description=f"Extra Guest Charge ({unit_type.name})",
+                            amount=extra_nightly_charge,
+                            tax_amount=extra_tax,
+                            tax_type='Excluded',
+                            tax_percent=Decimal('0.00'),
+                            date=curr_d
+                        )
+                        newly_added_charges.append({
+                            'date': curr_d,
+                            'desc': f"Extra Guest Charge ({unit_type.name})",
+                            'amount': extra_nightly_charge,
+                            'tax': extra_tax,
+                            'tax_lbl': 'GST Tax'
+                        })
+
+                    # Post to GuestFolio if open
+                    if folio:
+                        try:
+                            FolioTransaction.objects.create(
+                                tenant=tenant,
+                                folio=folio,
+                                transaction_type='CHARGE',
+                                charge_code='ROOM_RATE',
+                                amount=nightly_rate,
+                                description=f"Room Charge ({unit_type.name}) - {curr_d.strftime('%d %b %Y')}"
+                            )
+                            if night_tax > Decimal('0.00'):
+                                FolioTransaction.objects.create(
+                                    tenant=tenant,
+                                    folio=folio,
+                                    transaction_type='CHARGE',
+                                    charge_code='TAX',
+                                    amount=night_tax,
+                                    description=f"{tax_lbl} - {curr_d.strftime('%d %b %Y')}"
+                                )
+                            if extra_nightly_charge > Decimal('0.00'):
+                                FolioTransaction.objects.create(
+                                    tenant=tenant,
+                                    folio=folio,
+                                    transaction_type='CHARGE',
+                                    charge_code='EXTRA_CHARGE',
+                                    amount=extra_nightly_charge,
+                                    description=f"Extra Guest Charge ({unit_type.name}) - {curr_d.strftime('%d %b %Y')}"
+                                )
+                        except Exception:
+                            pass
+
+                curr_d += timedelta(days=1)
+
+        # Recalculate total_amount and tax_amount for the entire reservation
+        total_room_charges = Decimal('0.00')
+        total_room_tax = Decimal('0.00')
+        for alloc in allocations:
+            guest_cnt = (alloc.adult_count or 1) + (alloc.child_count or 0)
+            for snap in alloc.rate_snapshots.all():
+                total_room_charges += snap.amount_charged
+                t_amt, _ = calculate_item_tax(
+                    tenant=tenant,
+                    item_price=snap.amount_charged,
+                    per_night_tariff=snap.amount_charged,
+                    guests_count=guest_cnt
+                )
+                total_room_tax += t_amt
+
+        # Sum Extra Charges
+        extra_charges = ReservationExtraCharge.objects.filter(reservation=reservation)
+        total_extra_charges = sum((ec.amount for ec in extra_charges), Decimal('0.00'))
+        total_extra_tax = sum((ec.tax_amount for ec in extra_charges), Decimal('0.00'))
+
+        # Sum Packages & Services
+        total_pkg_charges = sum((p.price for p in reservation.packages.all()), Decimal('0.00'))
+        total_pkg_tax = Decimal('0.00')
+        for p in reservation.packages.all():
+            p_tax, _ = calculate_item_tax(tenant=tenant, item_price=p.price)
+            total_pkg_tax += p_tax
+
+        total_svc_charges = sum((s.price for s in reservation.services.all()), Decimal('0.00'))
+        total_svc_tax = Decimal('0.00')
+        for s in reservation.services.all():
+            s_tax, _ = calculate_item_tax(tenant=tenant, item_price=s.price)
+            total_svc_tax += s_tax
+
+        total_amount = total_room_charges + total_extra_charges + total_pkg_charges + total_svc_charges
+        total_tax = total_room_tax + total_extra_tax + total_pkg_tax + total_svc_tax
+        discount = reservation.discount_amount or Decimal('0.00')
+
+        reservation.departure_date = new_dep
+        reservation.arrival_date = new_arr
+        reservation.total_amount = total_amount
+        reservation.tax_amount = total_tax
+        net_payable = (total_amount + total_tax) - discount
+        paid_val = reservation.paid_amount or Decimal('0.00')
+        reservation.balance_amount = max(Decimal('0.00'), net_payable - paid_val)
+        reservation.save()
+
+        # Update GuestFolio balance
+        if folio:
+            try:
+                folio.total_charges = net_payable
+                folio.total_payments = paid_val
+                folio.balance = net_payable - paid_val
+                folio.save()
+            except Exception:
+                pass
+
+        # Create Timeline Event
+        diff_str = f"Stay amended from {old_dep} to {new_dep}. Total charges updated to ₹{net_payable:.2f} (New Balance: ₹{reservation.balance_amount:.2f})."
+        ReservationEvent.objects.create(
+            tenant=tenant,
+            reservation=reservation,
+            event_type='AMENDED',
+            description=diff_str,
+            actor_user=user,
+            payload_diff=make_serializable({
+                'previous_departure': str(old_dep),
+                'new_departure': str(new_dep),
+                'new_total_amount': str(total_amount),
+                'new_tax_amount': str(total_tax),
+                'new_net_payable': str(net_payable),
+                'new_balance': str(reservation.balance_amount),
+                'newly_added_charges': newly_added_charges
+            })
+        )
+
         return reservation
 
 

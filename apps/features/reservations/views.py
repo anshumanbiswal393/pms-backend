@@ -300,6 +300,39 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 pass
         return super().list(request, *args, **kwargs)
 
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        tenant = getattr(request, 'tenant', None)
+        new_dep = request.data.get('departure_date') or request.data.get('check_out_date')
+        new_arr = request.data.get('arrival_date') or request.data.get('check_in_date')
+        
+        # If dates are being amended, run full stay amendment logic with rate snapshot and folio recalculation
+        if tenant and (new_dep or new_arr):
+            str_old_dep = str(instance.departure_date) if instance.departure_date else ""
+            str_new_dep = str(new_dep).split('T')[0] if new_dep else str_old_dep
+            str_old_arr = str(instance.arrival_date) if instance.arrival_date else ""
+            str_new_arr = str(new_arr).split('T')[0] if new_arr else str_old_arr
+            
+            if str_new_dep != str_old_dep or str_new_arr != str_old_arr:
+                try:
+                    from apps.features.reservations.services import ReservationModificationEngine
+                    instance = ReservationModificationEngine.amend_stay(
+                        tenant=tenant,
+                        reservation_id=instance.id,
+                        new_departure_date=str_new_dep,
+                        new_arrival_date=str_new_arr,
+                        user=request.user if request.user.is_authenticated else None
+                    )
+                    # After running amend_stay, return refreshed serialized instance
+                    serializer = self.get_serializer(instance)
+                    return Response(serializer.data, status=status.HTTP_200_OK)
+                except DjangoValidationError as e:
+                    handle_django_validation_error(e)
+                except Exception as e:
+                    return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        
+        return super().partial_update(request, *args, **kwargs)
+
     @extend_schema(request=PriceEstimationSerializer, responses={200: dict})
     @action(detail=False, methods=['post'], url_path='estimate')
     def estimate(self, request):
@@ -560,6 +593,35 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             special_requests=serializer.validated_data.get('special_requests'),
             user=request.user
         )
+        output = self.get_serializer(updated)
+        return Response(output.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post', 'patch'], url_path='amend-stay')
+    def amend_stay(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+        new_dep = request.data.get('departure_date') or request.data.get('new_departure_date') or request.data.get('check_out_date')
+        new_arr = request.data.get('arrival_date') or request.data.get('new_arrival_date') or request.data.get('check_in_date')
+        if not new_dep:
+            return Response({'error': 'departure_date is required to amend stay.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from apps.features.reservations.services import ReservationModificationEngine
+            updated = ReservationModificationEngine.amend_stay(
+                tenant=tenant,
+                reservation_id=reservation.id,
+                new_departure_date=new_dep,
+                new_arrival_date=new_arr,
+                user=request.user if request.user.is_authenticated else None
+            )
+        except DjangoValidationError as e:
+            handle_django_validation_error(e)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
