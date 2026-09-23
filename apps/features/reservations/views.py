@@ -444,17 +444,53 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         serializer = AssignRoomSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        room_id = serializer.validated_data['room_id']
+        room = InventoryUnit.objects.get(id=room_id, tenant=tenant)
+
+        allocation_id = serializer.validated_data.get('allocation_id')
+        allocation = None
+        if allocation_id:
+            try:
+                allocation = ReservationInventory.objects.get(id=allocation_id, tenant=tenant)
+            except ReservationInventory.DoesNotExist:
+                pass
+
+        if not allocation:
+            allocation = reservation.room_allocations.filter(inventory_unit__isnull=True).first() or reservation.room_allocations.first()
+
+        if not allocation:
+            allocation = ReservationInventory.objects.create(
+                tenant=tenant,
+                reservation=reservation,
+                inventory_unit_type=room.inventory_unit_type,
+                inventory_unit=None,
+                check_in_date=reservation.arrival_date,
+                check_out_date=reservation.departure_date,
+                status='UNASSIGNED',
+                adult_count=1,
+                child_count=0
+            )
+
+        if 'adult_count' in serializer.validated_data:
+            allocation.adult_count = serializer.validated_data['adult_count']
+        if 'child_count' in serializer.validated_data:
+            allocation.child_count = serializer.validated_data['child_count']
+        if 'meal_plan' in serializer.validated_data and serializer.validated_data['meal_plan']:
+            allocation.meal_plan = serializer.validated_data['meal_plan']
+        allocation.save()
+
         try:
             RoomAssignmentEngine.assign_room(
                 tenant=tenant,
-                allocation_id=serializer.validated_data['allocation_id'],
-                room_id=serializer.validated_data['room_id'],
+                allocation_id=allocation.id,
+                room_id=room_id,
                 user=request.user,
-                upgrade_reason=serializer.validated_data.get('upgrade_reason')
+                upgrade_reason=serializer.validated_data.get('upgrade_reason') or ('Auto-assigned room' if room.inventory_unit_type != allocation.inventory_unit_type else None)
             )
         except DjangoValidationError as e:
             handle_django_validation_error(e)
         # return updated reservation
+        reservation.refresh_from_db()
         output = self.get_serializer(reservation)
         return Response(output.data, status=status.HTTP_200_OK)
 

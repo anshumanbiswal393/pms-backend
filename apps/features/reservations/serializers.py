@@ -956,7 +956,9 @@ class CreateBookingSerializer(serializers.Serializer):
 
     # Nested Allocations
     allocations = serializers.ListField(
-        child=serializers.JSONField()
+        child=serializers.JSONField(),
+        required=False,
+        default=list
     )
 
     # Extra Items
@@ -1009,9 +1011,17 @@ class PriceEstimationSerializer(serializers.Serializer):
 
 
 class AssignRoomSerializer(serializers.Serializer):
-    allocation_id = serializers.UUIDField()
+    allocation_id = serializers.UUIDField(required=False, allow_null=True)
     room_id = serializers.UUIDField()
     upgrade_reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    adult_count = serializers.IntegerField(required=False, min_value=1)
+    child_count = serializers.IntegerField(required=False, min_value=0)
+    room_rate = serializers.DecimalField(required=False, max_digits=12, decimal_places=2)
+    extra_charge = serializers.DecimalField(required=False, max_digits=12, decimal_places=2)
+    discount_percent = serializers.DecimalField(required=False, max_digits=5, decimal_places=2)
+    tax_percent = serializers.DecimalField(required=False, max_digits=5, decimal_places=2)
+    meal_plan = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    rate_plan_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class ModifyRemarksSerializer(serializers.Serializer):
