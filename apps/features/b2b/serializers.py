@@ -67,26 +67,48 @@ class B2BPartnerSerializer(serializers.ModelSerializer):
             digits = digits[2:]
         if len(digits) != 10:
             raise serializers.ValidationError("Phone number must be exactly 10 digits.")
-        return digits
-
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         
-        def get_doc_url(field_file, default_url):
+        request = self.context.get('request')
+
+        def get_doc_url(field_file, default_val=None):
             if not field_file:
                 return None
-            name = field_file.name
-            # If the database value is an absolute URL, return it directly
+            
+            # If it has a url property (FieldFile)
+            if hasattr(field_file, 'url'):
+                try:
+                    url = field_file.url
+                    if request:
+                        return request.build_absolute_uri(url)
+                    return url
+                except Exception:
+                    pass
+            
+            name = str(field_file)
+            if not name:
+                return None
             if name.startswith('http://') or name.startswith('https://') or name.startswith('//'):
                 return name
-            return default_url
+            if not name.startswith('/'):
+                name = f"/media/{name}"
+            elif not name.startswith('/media/'):
+                name = f"/media{name}"
+            
+            if request:
+                return request.build_absolute_uri(name)
+            return name
 
         # Nest the document fields in a 'documents' object as expected by the frontend
         ret['documents'] = {
-            'incorporation': get_doc_url(instance.incorporation_document, ret.pop('incorporation', None)),
-            'ownerId': get_doc_url(instance.owner_id_document, ret.pop('ownerId', None)),
-            'cheque': get_doc_url(instance.cheque_document, ret.pop('cheque', None))
+            'incorporation': get_doc_url(instance.incorporation_document),
+            'ownerId': get_doc_url(instance.owner_id_document),
+            'cheque': get_doc_url(instance.cheque_document)
         }
+        ret.pop('incorporation', None)
+        ret.pop('ownerId', None)
+        ret.pop('cheque', None)
         return ret
 
     def to_internal_value(self, data):
