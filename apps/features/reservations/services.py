@@ -1,9 +1,13 @@
 import uuid
+import random
+import logging
 from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.forms.models import model_to_dict
+
+logger = logging.getLogger(__name__)
 from apps.features.reservations.models import (
     CorporateAccount, GroupBlock, Reservation, ReservationInventory,
     ReservationRateSnapshot, ReservationGuest, ReservationEvent,
