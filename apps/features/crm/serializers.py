@@ -192,23 +192,26 @@ class GuestProfileSerializer(serializers.ModelSerializer):
             id_proof_url = request.data.get('id_proof_url')
             
             if id_type is not None or id_number is not None or id_proof_url is not None:
-                doc = instance.documents.first()
-                doc_type = 'PASSPORT'
+                doc_type = 'NATIONAL_ID'
                 if id_type:
-                    id_type_upper = id_type.upper()
-                    if 'ID' in id_type_upper or 'CARD' in id_type_upper or 'AADHAAR' in id_type_upper or 'NATIONAL' in id_type_upper or 'VOTER' in id_type_upper or 'PAN' in id_type_upper:
-                        doc_type = 'NATIONAL_ID'
-                    elif 'LICENSE' in id_type_upper or 'LICENCE' in id_type_upper or 'DRIVING' in id_type_upper:
-                        doc_type = 'DRIVING_LICENCE'
-                    elif 'PASSPORT' in id_type_upper:
+                    id_type_upper = str(id_type).upper()
+                    if 'PASS' in id_type_upper:
                         doc_type = 'PASSPORT'
+                    elif 'LICEN' in id_type_upper or 'DRIV' in id_type_upper:
+                        doc_type = 'DRIVING_LICENCE'
+                    else:
+                        doc_type = 'NATIONAL_ID'
                 
                 encrypted_doc_num = EncryptionHelper.encrypt(id_number) if id_number else ""
 
+                # Look for existing document of this type or any document for this guest
+                doc = instance.documents.filter(document_type=doc_type).first() or instance.documents.first()
                 if doc:
-                    if id_type is not None: doc.document_type = doc_type
-                    if id_number is not None: doc.document_number = encrypted_doc_num
-                    if id_proof_url is not None: doc.attachment_url = id_proof_url
+                    doc.document_type = doc_type
+                    if id_number is not None:
+                        doc.document_number = encrypted_doc_num
+                    if id_proof_url is not None:
+                        doc.attachment_url = id_proof_url
                     doc.save()
                 else:
                     GuestDocument.objects.create(

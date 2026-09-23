@@ -1336,6 +1336,16 @@ class ReservationModificationEngine:
                     snap.delete()
                     del existing_snaps[s_date]
 
+            # Also cleanup any ReservationExtraCharge records outside new date range
+            ReservationExtraCharge.objects.filter(
+                reservation=reservation,
+                date__lt=new_arr
+            ).delete()
+            ReservationExtraCharge.objects.filter(
+                reservation=reservation,
+                date__gte=new_dep
+            ).delete()
+
             # Resolve template rate plan and nightly base rate from existing snapshots
             ref_snap = alloc.rate_snapshots.first()
             if ref_snap:
@@ -1357,14 +1367,6 @@ class ReservationModificationEngine:
                     'rate_plan_name': rate_plan.name if rate_plan else 'Best Available Rate',
                     'amount': str(nightly_rate),
                 }
-
-            # Calculate extra guest nightly charge for this allocation
-            base_occ = getattr(unit_type, 'base_occupancy', 2) or 2
-            extra_adults = max(0, (alloc.adult_count or 1) - base_occ)
-            extra_nightly_charge = Decimal('0.00')
-            if extra_adults > 0:
-                extra_adult_rate = getattr(unit_type, 'extra_adult_price', None) or getattr(unit_type, 'extra_adult_charge', None) or Decimal('500.00')
-                extra_nightly_charge = Decimal(str(extra_adult_rate)) * extra_adults
 
             # Iterate every night of the stay
             curr_d = new_arr
@@ -1402,27 +1404,6 @@ class ReservationModificationEngine:
                         'tax_lbl': tax_lbl
                     })
 
-                    # If extra adult charge applies, add nightly extra charge
-                    if extra_nightly_charge > Decimal('0.00'):
-                        extra_tax, _ = calculate_item_tax(tenant=tenant, item_price=extra_nightly_charge)
-                        ReservationExtraCharge.objects.create(
-                            tenant=tenant,
-                            reservation=reservation,
-                            description=f"Extra Guest Charge ({unit_type.name})",
-                            amount=extra_nightly_charge,
-                            tax_amount=extra_tax,
-                            tax_type='Excluded',
-                            tax_percent=Decimal('0.00'),
-                            date=curr_d
-                        )
-                        newly_added_charges.append({
-                            'date': curr_d,
-                            'desc': f"Extra Guest Charge ({unit_type.name})",
-                            'amount': extra_nightly_charge,
-                            'tax': extra_tax,
-                            'tax_lbl': 'GST Tax'
-                        })
-
                     # Post to GuestFolio if open
                     if folio:
                         try:
@@ -1442,15 +1423,6 @@ class ReservationModificationEngine:
                                     charge_code='TAX',
                                     amount=night_tax,
                                     description=f"{tax_lbl} - {curr_d.strftime('%d %b %Y')}"
-                                )
-                            if extra_nightly_charge > Decimal('0.00'):
-                                FolioTransaction.objects.create(
-                                    tenant=tenant,
-                                    folio=folio,
-                                    transaction_type='CHARGE',
-                                    charge_code='EXTRA_CHARGE',
-                                    amount=extra_nightly_charge,
-                                    description=f"Extra Guest Charge ({unit_type.name}) - {curr_d.strftime('%d %b %Y')}"
                                 )
                         except Exception:
                             pass
