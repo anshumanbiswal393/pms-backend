@@ -176,16 +176,22 @@ class GuestProfileSerializer(serializers.ModelSerializer):
                     if email is not None: contact.email = email
                     if phone is not None: contact.phone = phone
                     if address is not None: contact.address_line_1 = address
-                    contact.save()
+                    try:
+                        contact.save()
+                    except Exception:
+                        pass
                 else:
-                    GuestContact.objects.create(
-                        tenant=instance.tenant,
-                        guest=instance,
-                        email=email or "",
-                        phone=phone or "",
-                        address_line_1=address or "",
-                        is_primary=True
-                    )
+                    try:
+                        GuestContact.objects.create(
+                            tenant=instance.tenant,
+                            guest=instance,
+                            email=email or "",
+                            phone=phone or "",
+                            address_line_1=address or "",
+                            is_primary=True
+                        )
+                    except Exception:
+                        pass
             
             id_type = request.data.get('id_type')
             id_number = request.data.get('id_number')

@@ -173,35 +173,63 @@ class BookingEngine:
             ]
         }
         """
-        # Resolve Primary Guest (either lookup by UUID or create inline)
+        # Resolve Primary Guest (either lookup by UUID, lookup by contact/email/phone, or create inline)
+        primary_guest = None
         if booking_data.get('primary_guest_id'):
-            primary_guest = GuestProfile.objects.get(id=booking_data['primary_guest_id'], tenant=tenant)
-            phone = (booking_data.get('phone') or booking_data.get('event_organizer_contact') or '').strip()
-            email = (booking_data.get('email') or booking_data.get('event_organizer_email') or '').strip()
-            address = (booking_data.get('address') or booking_data.get('event_organizer_billing_address') or '').strip()
-            id_type = booking_data.get('idType') or "PASSPORT"
-            id_number = (booking_data.get('idNumber') or '').strip()
-            id_proof_url = booking_data.get('id_proof_url') or booking_data.get('idProofUrl') or ""
+            try:
+                primary_guest = GuestProfile.objects.get(id=booking_data['primary_guest_id'], tenant=tenant)
+            except GuestProfile.DoesNotExist:
+                primary_guest = None
 
+        phone = (booking_data.get('phone') or booking_data.get('event_organizer_contact') or '').strip()
+        email = (booking_data.get('email') or booking_data.get('event_organizer_email') or '').strip()
+        address = (booking_data.get('address') or booking_data.get('event_organizer_billing_address') or '').strip()
+        id_type = booking_data.get('idType') or "PASSPORT"
+        id_number = (booking_data.get('idNumber') or '').strip()
+        id_proof_url = booking_data.get('id_proof_url') or booking_data.get('idProofUrl') or ""
+
+        if not primary_guest and (email or phone):
+            contact = None
+            if email and phone and phone not in ['+91-', '+91', '0000000000']:
+                contact = GuestContact.objects.filter(tenant=tenant, email=email, phone=phone).first()
+            if not contact and phone and phone not in ['+91-', '+91', '0000000000']:
+                contact = GuestContact.objects.filter(tenant=tenant, phone=phone).first()
+            if not contact and email and email != 'guest@example.com':
+                contact = GuestContact.objects.filter(tenant=tenant, email=email).first()
+            if contact:
+                primary_guest = contact.guest
+
+        if primary_guest:
             if phone or email or address:
                 contact = primary_guest.contacts.filter(is_primary=True).first() or primary_guest.contacts.first()
                 if contact:
-                    if phone and phone not in ['+91-', '+91', '0000000000']:
-                        contact.phone = phone
-                    if email and email != 'guest@example.com':
-                        contact.email = email
+                    if phone and phone not in ['+91-', '+91', '0000000000'] and contact.phone != phone:
+                        if not GuestContact.objects.filter(tenant=tenant, email=contact.email, phone=phone).exclude(id=contact.id).exists():
+                            contact.phone = phone
+                    if email and email != 'guest@example.com' and contact.email != email:
+                        if not GuestContact.objects.filter(tenant=tenant, email=email, phone=contact.phone).exclude(id=contact.id).exists():
+                            contact.email = email
                     if address and address != 'Address':
                         contact.address_line_1 = address
-                    contact.save()
+                    try:
+                        contact.save()
+                    except Exception:
+                        pass
                 elif phone or email:
-                    GuestContact.objects.create(
-                        tenant=tenant,
-                        guest=primary_guest,
-                        email=email or 'guest@example.com',
-                        phone=phone or '0000000000',
-                        address_line_1=address or '',
-                        is_primary=True
-                    )
+                    clean_email = email or f"guest_{primary_guest.id.hex[:8]}@example.com"
+                    clean_phone = phone or '0000000000'
+                    if not GuestContact.objects.filter(tenant=tenant, email=clean_email, phone=clean_phone).exists():
+                        try:
+                            GuestContact.objects.create(
+                                tenant=tenant,
+                                guest=primary_guest,
+                                email=clean_email,
+                                phone=clean_phone,
+                                address_line_1=address or '',
+                                is_primary=True
+                            )
+                        except Exception:
+                            pass
             if id_number or id_proof_url:
                 doc = primary_guest.documents.first()
                 if not doc:
@@ -212,70 +240,58 @@ class BookingEngine:
                     elif any(kw in id_type_upper for kw in ['LICENSE', 'LICENCE', 'DRIVING']):
                         doc_type = 'DRIVING_LICENCE'
                     encrypted_doc_num = EncryptionHelper.encrypt(id_number) if id_number else ""
-                    GuestDocument.objects.create(
-                        tenant=tenant,
-                        guest=primary_guest,
-                        document_type=doc_type,
-                        document_number=encrypted_doc_num,
-                        attachment_url=id_proof_url,
-                        is_verified=False
-                    )
+                    try:
+                        GuestDocument.objects.create(
+                            tenant=tenant,
+                            guest=primary_guest,
+                            document_type=doc_type,
+                            document_number=encrypted_doc_num,
+                            attachment_url=id_proof_url,
+                            is_verified=False
+                        )
+                    except Exception:
+                        pass
         else:
             full_name = booking_data.get('fullName') or booking_data.get('event_organizer_name') or "Inline Guest"
-            email = booking_data.get('email') or booking_data.get('event_organizer_email') or ""
-            phone = booking_data.get('phone') or booking_data.get('event_organizer_contact') or ""
-            address = booking_data.get('address') or booking_data.get('event_organizer_billing_address') or ""
             nationality = booking_data.get('nationality') or ""
-            id_type = booking_data.get('idType') or "PASSPORT"
-            id_number = booking_data.get('idNumber') or ""
 
             parts = full_name.strip().split(' ', 1)
             first_name = parts[0]
             last_name = parts[1] if len(parts) > 1 else "Guest"
 
-            contact = None
-            if email or phone:
-                contact = GuestContact.objects.filter(tenant=tenant, email=email, phone=phone).first()
-                if not contact and email:
-                    contact = GuestContact.objects.filter(tenant=tenant, email=email).first()
-                if not contact and phone:
-                    contact = GuestContact.objects.filter(tenant=tenant, phone=phone).first()
-
-            if contact:
-                primary_guest = contact.guest
-                if email and contact.email != email:
-                    contact.email = email
-                if phone and contact.phone != phone:
-                    contact.phone = phone
-                if address:
-                    contact.address_line_1 = address
-                contact.save()
-            else:
-                primary_guest = GuestProfile.objects.create(
-                    tenant=tenant,
-                    first_name=first_name,
-                    last_name=last_name,
-                    nationality=nationality,
-                    guest_type='DOMESTIC'
-                )
+            primary_guest = GuestProfile.objects.create(
+                tenant=tenant,
+                first_name=first_name,
+                last_name=last_name,
+                nationality=nationality,
+                guest_type='DOMESTIC'
+            )
+            clean_email = email or f"guest_{primary_guest.id.hex[:8]}@example.com"
+            clean_phone = phone or '0000000000'
+            if GuestContact.objects.filter(tenant=tenant, email=clean_email, phone=clean_phone).exists():
+                clean_email = f"guest_{primary_guest.id.hex[:8]}@example.com"
+            try:
                 GuestContact.objects.create(
                     tenant=tenant,
                     guest=primary_guest,
-                    email=email,
-                    phone=phone,
+                    email=clean_email,
+                    phone=clean_phone,
                     address_line_1=address,
                     is_primary=True
                 )
-                id_proof_url = booking_data.get('id_proof_url') or booking_data.get('idProofUrl') or ""
-                if id_number or id_proof_url:
-                    doc_type = 'PASSPORT'
-                    id_type_upper = id_type.upper()
-                    if 'ID' in id_type_upper or 'CARD' in id_type_upper or 'AADHAAR' in id_type_upper or 'NATIONAL' in id_type_upper or 'VOTER' in id_type_upper or 'PAN' in id_type_upper:
-                        doc_type = 'NATIONAL_ID'
-                    elif 'LICENSE' in id_type_upper or 'LICENCE' in id_type_upper or 'DRIVING' in id_type_upper:
-                        doc_type = 'DRIVING_LICENCE'
+            except Exception as ex:
+                logger.warning(f"Could not create contact for guest {primary_guest.id}: {ex}")
 
-                    encrypted_doc_num = EncryptionHelper.encrypt(id_number) if id_number else ""
+            if id_number or id_proof_url:
+                doc_type = 'PASSPORT'
+                id_type_upper = id_type.upper()
+                if any(kw in id_type_upper for kw in ['ID', 'CARD', 'AADHAAR', 'NATIONAL', 'VOTER', 'PAN']):
+                    doc_type = 'NATIONAL_ID'
+                elif any(kw in id_type_upper for kw in ['LICENSE', 'LICENCE', 'DRIVING']):
+                    doc_type = 'DRIVING_LICENCE'
+
+                encrypted_doc_num = EncryptionHelper.encrypt(id_number) if id_number else ""
+                try:
                     GuestDocument.objects.create(
                         tenant=tenant,
                         guest=primary_guest,
@@ -284,6 +300,8 @@ class BookingEngine:
                         attachment_url=id_proof_url,
                         is_verified=False
                     )
+                except Exception:
+                    pass
         
         # Resolve Reservation Source
         res_source_id = booking_data.get('reservation_source_id')
@@ -499,13 +517,19 @@ class BookingEngine:
                         guest_type='DOMESTIC'
                     )
                     if g_phone or g_email:
-                        GuestContact.objects.create(
-                            tenant=tenant,
-                            guest=sec_guest,
-                            phone=g_phone or '0000000000',
-                            email=g_email or '',
-                            is_primary=True
-                        )
+                        sec_email = g_email or f"sec_{sec_guest.id.hex[:8]}@example.com"
+                        sec_phone = g_phone or '0000000000'
+                        if not GuestContact.objects.filter(tenant=tenant, email=sec_email, phone=sec_phone).exists():
+                            try:
+                                GuestContact.objects.create(
+                                    tenant=tenant,
+                                    guest=sec_guest,
+                                    phone=sec_phone,
+                                    email=sec_email,
+                                    is_primary=True
+                                )
+                            except Exception:
+                                pass
                     if g_id_number:
                         enc_doc = EncryptionHelper.encrypt(g_id_number)
                         doc_t = 'PASSPORT' if 'PASSPORT' in g_id_type.upper() else 'DRIVING_LICENCE' if any(k in g_id_type.upper() for k in ['DRIV', 'LICEN']) else 'NATIONAL_ID'

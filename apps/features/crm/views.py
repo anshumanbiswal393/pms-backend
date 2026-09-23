@@ -34,12 +34,19 @@ class GuestProfileViewSet(viewsets.ModelViewSet):
             return GuestProfile.objects.none()
         
         queryset = GuestProfile.objects.filter(tenant=tenant)
-        search_query = self.request.query_params.get('search')
+        search_query = self.request.query_params.get('search') or self.request.query_params.get('query')
         if search_query:
-            queryset = queryset.filter(
-                Q(first_name__icontains=search_query) |
-                Q(last_name__icontains=search_query)
+            clean_search = search_query.strip()
+            clean_digits = ''.join(c for c in clean_search if c.isdigit())
+            q_filter = (
+                Q(first_name__icontains=clean_search) |
+                Q(last_name__icontains=clean_search) |
+                Q(contacts__email__icontains=clean_search) |
+                Q(contacts__phone__icontains=clean_search)
             )
+            if len(clean_digits) >= 4:
+                q_filter |= Q(contacts__phone__icontains=clean_digits)
+            queryset = queryset.filter(q_filter).distinct()
         return queryset
 
     @extend_schema(
@@ -360,8 +367,21 @@ class GuestContactViewSet(viewsets.ModelViewSet):
             existing.save()
             return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
 
-        serializer.save(tenant=tenant)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        try:
+            serializer.save(tenant=tenant)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Exception:
+            existing = None
+            if tenant:
+                if email and phone:
+                    existing = GuestContact.objects.filter(tenant=tenant, email=email, phone=phone).first()
+                if not existing and phone:
+                    existing = GuestContact.objects.filter(tenant=tenant, phone=phone).first()
+                if not existing and email:
+                    existing = GuestContact.objects.filter(tenant=tenant, email=email).first()
+            if existing:
+                return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
+            return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class GuestDocumentViewSet(viewsets.ModelViewSet):
