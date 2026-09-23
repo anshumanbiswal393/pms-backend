@@ -279,5 +279,11 @@ class MediaFileServeView(APIView):
             raise Http404("Media file not found")
         
         content_type, _ = mimetypes.guess_type(file_path)
-        return FileResponse(open(file_path, 'rb'), content_type=content_type or 'application/octet-stream')
+        response = FileResponse(open(file_path, 'rb'), content_type=content_type or 'application/octet-stream')
+        response['X-Frame-Options'] = 'ALLOWALL'
+        response['Access-Control-Allow-Origin'] = '*'
+        if content_type in ['application/pdf'] or (content_type and content_type.startswith('image/')):
+            response['Content-Disposition'] = f'inline; filename="{os.path.basename(file_path)}"'
+        return response
+
 

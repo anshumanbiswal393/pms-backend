@@ -72,33 +72,43 @@ class B2BPartnerSerializer(serializers.ModelSerializer):
         
         request = self.context.get('request')
 
-        def get_doc_url(field_file, default_val=None):
+        def get_doc_url(field_file):
             if not field_file:
                 return None
             
-            # If it has a url property (FieldFile)
+            raw_url = ""
             if hasattr(field_file, 'url'):
                 try:
-                    url = field_file.url
-                    if request:
-                        return request.build_absolute_uri(url)
-                    return url
+                    raw_url = field_file.url
                 except Exception:
                     pass
-            
-            name = str(field_file)
-            if not name:
+            if not raw_url:
+                name = str(field_file.name if hasattr(field_file, 'name') else field_file)
+                raw_url = name
+
+            if not raw_url or raw_url.strip().lower() in ['none', 'null', '']:
                 return None
-            if name.startswith('http://') or name.startswith('https://') or name.startswith('//'):
-                return name
-            if not name.startswith('/'):
-                name = f"/media/{name}"
-            elif not name.startswith('/media/'):
-                name = f"/media{name}"
-            
+
+            # External cloud storage URL (S3, Cloudinary, etc.)
+            if raw_url.startswith('http://') or raw_url.startswith('https://') or raw_url.startswith('//'):
+                if 'retrod' not in raw_url and 'localhost' not in raw_url and '127.0.0.1' not in raw_url:
+                    return raw_url
+                from urllib.parse import urlparse
+                parsed = urlparse(raw_url)
+                raw_url = parsed.path
+
+            clean_path = raw_url.lstrip('/')
+            if clean_path.startswith('api/media/'):
+                clean_path = clean_path[len('api/media/'):]
+            elif clean_path.startswith('media/'):
+                clean_path = clean_path[len('media/'):]
+            elif clean_path.startswith('api/'):
+                clean_path = clean_path[len('api/'):]
+
+            api_path = f"/api/media/{clean_path}"
             if request:
-                return request.build_absolute_uri(name)
-            return name
+                return request.build_absolute_uri(api_path)
+            return api_path
 
         # Nest the document fields in a 'documents' object as expected by the frontend
         ret['documents'] = {
