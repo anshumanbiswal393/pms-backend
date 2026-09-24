@@ -1053,7 +1053,7 @@ class RoomUpgradeSerializer(serializers.Serializer):
 
 
 class RoomChangeSerializer(serializers.Serializer):
-    allocation_id = serializers.UUIDField()
+    allocation_id = serializers.UUIDField(required=False, allow_null=True)
     new_room_id = serializers.UUIDField()
     new_check_in_date = serializers.DateField(required=False, allow_null=True)
     new_check_out_date = serializers.DateField(required=False, allow_null=True)

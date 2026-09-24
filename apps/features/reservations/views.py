@@ -1021,21 +1021,51 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         if not tenant:
             return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        reservation = self.get_object()
         serializer = RoomChangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        new_room_id = serializer.validated_data['new_room_id']
+        new_room = InventoryUnit.objects.get(id=new_room_id, tenant=tenant)
+
+        allocation_id = serializer.validated_data.get('allocation_id')
+        allocation = None
+        if allocation_id:
+            try:
+                allocation = ReservationInventory.objects.get(id=allocation_id, tenant=tenant)
+            except ReservationInventory.DoesNotExist:
+                pass
+
+        if not allocation:
+            allocation = reservation.room_allocations.first()
+
+        if not allocation:
+            allocation = ReservationInventory.objects.create(
+                tenant=tenant,
+                reservation=reservation,
+                inventory_unit_type=new_room.inventory_unit_type,
+                inventory_unit=new_room,
+                check_in_date=serializer.validated_data.get('new_check_in_date') or reservation.arrival_date,
+                check_out_date=serializer.validated_data.get('new_check_out_date') or reservation.departure_date,
+                status='ASSIGNED',
+                adult_count=1,
+                child_count=0
+            )
 
         try:
             RoomAssignmentEngine.change_room(
                 tenant=tenant,
-                allocation_id=serializer.validated_data['allocation_id'],
-                new_room_id=serializer.validated_data['new_room_id'],
+                allocation_id=allocation.id,
+                new_room_id=new_room_id,
                 new_check_in_date=serializer.validated_data.get('new_check_in_date'),
                 new_check_out_date=serializer.validated_data.get('new_check_out_date'),
                 user=request.user
             )
         except DjangoValidationError as e:
             handle_django_validation_error(e)
-        return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
+
+        reservation.refresh_from_db()
+        return Response(self.get_serializer(reservation).data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'], url_path='validate-availability')
     def validate_availability(self, request):
