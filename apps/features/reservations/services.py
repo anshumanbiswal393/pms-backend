@@ -948,6 +948,13 @@ class RoomAssignmentEngine:
         allocation.inventory_unit = new_room
         if new_room.inventory_unit_type:
             allocation.inventory_unit_type = new_room.inventory_unit_type
+            allocation.inventory_snapshot = {
+                'id': str(new_room.inventory_unit_type.id),
+                'code': new_room.inventory_unit_type.code,
+                'name': new_room.inventory_unit_type.name,
+                'base_occupancy': new_room.inventory_unit_type.base_occupancy,
+                'max_occupancy': new_room.inventory_unit_type.max_occupancy,
+            }
         if new_check_in_date:
             allocation.check_in_date = new_check_in_date
         if new_check_out_date:
