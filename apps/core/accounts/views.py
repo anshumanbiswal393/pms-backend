@@ -525,10 +525,12 @@ class LogoutAllSessionsView(APIView):
 class CurrentUserView(APIView):
     """
     Returns the currently authenticated user details, permissions, and properties context.
+    Cached in Redis for 60 seconds per user and tenant to accelerate repeated page loads.
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        from django.core.cache import cache
         tenant = getattr(request.user, 'tenant', None) or getattr(request, 'tenant', None)
         if not tenant:
             tenant = Tenant.objects.first()
@@ -536,12 +538,26 @@ class CurrentUserView(APIView):
         if not tenant and not request.user.is_superuser:
             return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        cache_key = f"auth_me_u{request.user.id}_t{tenant.id if tenant else 'none'}"
+        try:
+            cached_data = cache.get(cache_key)
+            if cached_data is not None:
+                return Response(cached_data, status=status.HTTP_200_OK)
+        except Exception:
+            pass
+
         meta = AuthService.get_user_metadata(request.user, tenant)
-        return Response({
+        data = {
             'user': meta['user'],
             'permissions': meta['permissions'],
             'properties': meta['properties']
-        }, status=status.HTTP_200_OK)
+        }
+        try:
+            cache.set(cache_key, data, 60)
+        except Exception:
+            pass
+
+        return Response(data, status=status.HTTP_200_OK)
 
 
 @extend_schema(request=ChangePasswordSerializer, responses={200: dict})

@@ -1,6 +1,7 @@
 from rest_framework import viewsets, permissions, pagination
 from apps.core.audit.models import AuditLog
 from apps.core.audit.serializers import AuditLogSerializer
+from apps.core.common.mixins import RedisCacheMixin
 from django.utils import timezone
 from datetime import timedelta
 
@@ -9,19 +10,22 @@ class AuditLogPagination(pagination.PageNumberPagination):
     page_size_query_param = 'page_size'
     max_page_size = 100
 
-class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+class AuditLogViewSet(RedisCacheMixin, viewsets.ReadOnlyModelViewSet):
     """
     Tenant-isolated, read-only viewset for Audit logs.
+    Cached in Redis for rapid retrieval.
     """
+    cache_timeout = 60  # 1 minute
     serializer_class = AuditLogSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = AuditLogPagination
 
     def get_queryset(self):
         tenant = getattr(self.request.user, 'tenant', getattr(self.request, 'tenant', None))
         if not tenant:
             return AuditLog.objects.none()
         
-        queryset = AuditLog.objects.filter(tenant=tenant)
+        queryset = AuditLog.objects.filter(tenant=tenant).select_related('property', 'actor_user')
         
         # Filter for last 24 hours if last_24_hours=true
         last_24 = self.request.query_params.get('last_24_hours', 'false').lower() == 'true'
@@ -30,6 +34,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(timestamp__gte=cutoff)
             
         return queryset.order_by('-timestamp')
+
 
 
 class SuperadminAuditLogViewSet(viewsets.ReadOnlyModelViewSet):

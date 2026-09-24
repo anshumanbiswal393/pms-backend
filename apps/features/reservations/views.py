@@ -1285,10 +1285,12 @@ class WaitlistViewSet(viewsets.ModelViewSet):
         return Response(WaitlistEntrySerializer(entry).data)
 
 
-class ReservationEventViewSet(viewsets.ReadOnlyModelViewSet):
+class ReservationEventViewSet(RedisCacheMixin, viewsets.ReadOnlyModelViewSet):
     """
     Tenant-scoped ReadOnly ViewSet for Reservation Events (Audit Trails).
+    Cached in Redis for rapid retrieval during report rendering.
     """
+    cache_timeout = 120  # 2 minutes
     serializer_class = ReservationEventSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -1299,9 +1301,11 @@ class ReservationEventViewSet(viewsets.ReadOnlyModelViewSet):
 
         qs = ReservationEvent.objects.filter(tenant=tenant).select_related(
             'reservation', 'reservation__primary_guest', 'reservation__property', 'actor_user'
+        ).prefetch_related(
+            'reservation__room_allocations__inventory_unit'
         )
 
-        property_id = self.request.query_params.get('property_id') or self.request.query_params.get('property')
+        property_id = self.request.query_params.get('property_id') or self.request.query_params.get('property') or self.request.headers.get('X-Property-ID')
         if property_id:
             qs = qs.filter(reservation__property_id=property_id)
 
@@ -1323,3 +1327,4 @@ class ReservationEventViewSet(viewsets.ReadOnlyModelViewSet):
             )
 
         return qs.order_by('-created_at')
+

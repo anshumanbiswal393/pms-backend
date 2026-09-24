@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework import serializers
 from django.utils import timezone
 from apps.core.common.models import SystemNotification
+from apps.core.common.mixins import RedisCacheMixin
 
 class SystemNotificationSerializer(serializers.ModelSerializer):
     time_ago = serializers.SerializerMethodField()
@@ -35,7 +36,8 @@ class SystemNotificationSerializer(serializers.ModelSerializer):
         return f"{days}d ago"
 
 
-class SystemNotificationViewSet(viewsets.ModelViewSet):
+class SystemNotificationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
+    cache_timeout = 60  # 1 minute
     serializer_class = SystemNotificationSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -45,7 +47,7 @@ class SystemNotificationViewSet(viewsets.ModelViewSet):
         if not tenant:
             return SystemNotification.objects.none()
 
-        qs = SystemNotification.objects.filter(tenant=tenant)
+        qs = SystemNotification.objects.filter(tenant=tenant).select_related('property')
         
         # Property filter if provided
         property_id = self.request.headers.get('X-Property-ID') or self.request.query_params.get('property_id')
