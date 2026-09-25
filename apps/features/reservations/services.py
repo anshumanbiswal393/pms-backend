@@ -1142,14 +1142,15 @@ class CheckInCheckOutEngine:
         if reservation.status != 'CHECKED_IN':
             raise ValidationError("Reservation must be checked in to undo check-in.")
 
-        # Same-day validation: only allow undo check-in on the same operational business date
-        current_bdate = reservation.property.business_date if (reservation.property and reservation.property.business_date) else timezone.localdate()
+        # Same-day validation: only allow undo check-in on the same operational date (business date or local date)
+        today_local = timezone.localdate()
+        current_bdate = reservation.property.business_date if (reservation.property and reservation.property.business_date) else today_local
         checkin_event = reservation.timeline_events.filter(event_type='CHECKED_IN').order_by('-created_at').first()
-        checkin_date = checkin_event.created_at.date() if checkin_event else reservation.arrival_date
+        checkin_date = checkin_event.created_at.date() if checkin_event else (reservation.arrival_date or today_local)
 
-        if current_bdate > checkin_date:
+        if checkin_date < today_local and checkin_date < current_bdate:
             raise ValidationError(
-                f"Cannot undo check-in. Check-in was completed on {checkin_date}, which is prior to current business date {current_bdate}. Undo check-in is only permitted on the same operational date."
+                f"Cannot undo check-in. Check-in was completed on {checkin_date}, which is prior to current date. Undo check-in is only permitted on the same operational date."
             )
 
         reservation.status = 'CONFIRMED'
@@ -1180,14 +1181,15 @@ class CheckInCheckOutEngine:
         if reservation.status != 'CHECKED_OUT':
             raise ValidationError("Reservation must be checked out to undo check-out.")
 
-        # Same-day validation: only allow undo check-out on the same operational business date
-        current_bdate = reservation.property.business_date if (reservation.property and reservation.property.business_date) else timezone.localdate()
+        # Same-day validation: only allow undo check-out on the same operational date (business date or local date)
+        today_local = timezone.localdate()
+        current_bdate = reservation.property.business_date if (reservation.property and reservation.property.business_date) else today_local
         checkout_event = reservation.timeline_events.filter(event_type='CHECKED_OUT').order_by('-created_at').first()
-        checkout_date = checkout_event.created_at.date() if checkout_event else reservation.departure_date
+        checkout_date = checkout_event.created_at.date() if checkout_event else (reservation.departure_date or today_local)
 
-        if current_bdate > checkout_date:
+        if checkout_date < today_local and checkout_date < current_bdate:
             raise ValidationError(
-                f"Cannot undo check-out. Check-out was completed on {checkout_date}, which is prior to current business date {current_bdate}. Undo check-out is only permitted on the same operational date."
+                f"Cannot undo check-out. Check-out was completed on {checkout_date}, which is prior to current date. Undo check-out is only permitted on the same operational date."
             )
 
         reservation.status = 'CHECKED_IN'

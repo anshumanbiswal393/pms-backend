@@ -545,6 +545,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
 
     property_business_date = serializers.SerializerMethodField()
     checked_in_by_name = serializers.SerializerMethodField()
+    checked_out_at = serializers.SerializerMethodField()
     reservation_number = serializers.CharField(source='confirmation_number', read_only=True)
     confirmation_code = serializers.CharField(source='confirmation_number', read_only=True)
 
@@ -559,7 +560,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
             'primary_guest_id_type', 'primary_guest_id_number', 'primary_guest_id_proof_url', 'primary_guest_nationality', 'primary_guest_tier', 'primary_guest_city', 'primary_guest_address',
             'reservation_source', 'reservation_source_name', 'reservation_source_icon',
             'corporate_account', 'group_block', 'room_allocations', 'rate_plan_name', 'rate_plan_code',
-            'created_by_name', 'checked_in_by_name', 'actor_name', 'created_at', 'updated_at'
+            'created_by_name', 'checked_in_by_name', 'checked_out_at', 'actor_name', 'created_at', 'updated_at'
         ]
 
     def get_rate_plan_name(self, obj):
@@ -641,6 +642,17 @@ class ReservationListSerializer(serializers.ModelSerializer):
 
     def get_total_pax(self, obj):
         return get_reservation_meta(obj)['total_pax']
+
+    def get_checked_out_at(self, obj):
+        if obj.status == 'CHECKED_OUT':
+            if hasattr(obj, 'room_allocations'):
+                for alloc in obj.room_allocations.all():
+                    if hasattr(alloc, 'guests'):
+                        for g in alloc.guests.all():
+                            if getattr(g, 'checked_out_at', None):
+                                return g.checked_out_at
+            return obj.updated_at
+        return None
 
 
 class ReservationSerializer(serializers.ModelSerializer):
