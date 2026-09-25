@@ -1013,7 +1013,9 @@ class CheckInCheckOutEngine:
 
         # Check-in date validation: guest cannot check in before scheduled arrival date
         current_date = timezone.localdate()
-        if reservation.arrival_date and reservation.arrival_date > current_date:
+        prop_bdate = reservation.property.business_date if (reservation.property and reservation.property.business_date) else None
+        effective_date = max(current_date, prop_bdate) if prop_bdate else current_date
+        if reservation.arrival_date and reservation.arrival_date > effective_date:
             raise ValidationError(
                 f"Guest cannot check in before the scheduled arrival date ({reservation.arrival_date.strftime('%d-%b-%Y')})."
             )
