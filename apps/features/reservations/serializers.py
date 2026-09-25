@@ -867,7 +867,8 @@ class PriceEstimationSerializer(serializers.Serializer):
 
 class AssignRoomSerializer(serializers.Serializer):
     allocation_id = serializers.UUIDField(required=False, allow_null=True)
-    room_id = serializers.UUIDField()
+    room_id = serializers.UUIDField(required=False, allow_null=True)
+    new_room_id = serializers.UUIDField(required=False, allow_null=True)
     upgrade_reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     adult_count = serializers.IntegerField(required=False, min_value=1)
     child_count = serializers.IntegerField(required=False, min_value=0)
@@ -877,6 +878,11 @@ class AssignRoomSerializer(serializers.Serializer):
     tax_percent = serializers.DecimalField(required=False, max_digits=5, decimal_places=2)
     meal_plan = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     rate_plan_id = serializers.UUIDField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        if not attrs.get('room_id') and not attrs.get('new_room_id'):
+            raise serializers.ValidationError({'room_id': 'room_id is required.'})
+        return attrs
 
 
 class ModifyRemarksSerializer(serializers.Serializer):
@@ -909,9 +915,23 @@ class RoomUpgradeSerializer(serializers.Serializer):
 
 class RoomChangeSerializer(serializers.Serializer):
     allocation_id = serializers.UUIDField(required=False, allow_null=True)
-    new_room_id = serializers.UUIDField()
+    new_room_id = serializers.UUIDField(required=False, allow_null=True)
+    room_id = serializers.UUIDField(required=False, allow_null=True)
     new_check_in_date = serializers.DateField(required=False, allow_null=True)
     new_check_out_date = serializers.DateField(required=False, allow_null=True)
+    upgrade_reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    adult_count = serializers.IntegerField(required=False, min_value=1)
+    child_count = serializers.IntegerField(required=False, min_value=0)
+    room_rate = serializers.DecimalField(required=False, max_digits=12, decimal_places=2)
+    extra_charge = serializers.DecimalField(required=False, max_digits=12, decimal_places=2)
+    discount_percent = serializers.DecimalField(required=False, max_digits=5, decimal_places=2)
+    tax_percent = serializers.DecimalField(required=False, max_digits=5, decimal_places=2)
+    meal_plan = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def validate(self, attrs):
+        if not attrs.get('new_room_id') and not attrs.get('room_id'):
+            raise serializers.ValidationError({'new_room_id': 'Target room ID is required.'})
+        return attrs
 
 
 class WaitlistEntrySerializer(serializers.ModelSerializer):

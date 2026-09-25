@@ -856,6 +856,15 @@ class RoomAssignmentEngine:
                 raise ValidationError("Room type upgrade reason is required.")
 
         allocation.inventory_unit = room
+        if room.inventory_unit_type:
+            allocation.inventory_unit_type = room.inventory_unit_type
+            allocation.inventory_snapshot = {
+                'id': str(room.inventory_unit_type.id),
+                'code': room.inventory_unit_type.code,
+                'name': room.inventory_unit_type.name,
+                'base_occupancy': room.inventory_unit_type.base_occupancy,
+                'max_occupancy': room.inventory_unit_type.max_occupancy,
+            }
         allocation.assigned_at = timezone.now()
         allocation.assigned_by = user
         allocation.status = 'ASSIGNED'

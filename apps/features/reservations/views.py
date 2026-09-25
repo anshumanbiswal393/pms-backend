@@ -13,6 +13,7 @@ from apps.features.reservations.models import (
     ReservationEvent, ReservationExtraCharge, ReservationGuest
 )
 from apps.features.availability.models import WaitlistEntry
+from apps.features.inventory.models import InventoryUnit, InventoryUnitType
 from apps.features.reservations.serializers import (
     CorporateAccountSerializer, GroupBlockSerializer, ReservationSerializer,
     ReservationListSerializer,
@@ -444,8 +445,14 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         serializer = AssignRoomSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        room_id = serializer.validated_data['room_id']
-        room = InventoryUnit.objects.get(id=room_id, tenant=tenant)
+        room_id = serializer.validated_data.get('room_id') or serializer.validated_data.get('new_room_id')
+        try:
+            room = InventoryUnit.objects.get(id=room_id, tenant=tenant)
+        except InventoryUnit.DoesNotExist:
+            try:
+                room = InventoryUnit.objects.get(id=room_id)
+            except InventoryUnit.DoesNotExist:
+                return Response({'error': f'Room with ID {room_id} not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         allocation_id = serializer.validated_data.get('allocation_id')
         allocation = None
@@ -453,7 +460,10 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             try:
                 allocation = ReservationInventory.objects.get(id=allocation_id, tenant=tenant)
             except ReservationInventory.DoesNotExist:
-                pass
+                try:
+                    allocation = ReservationInventory.objects.get(id=allocation_id)
+                except ReservationInventory.DoesNotExist:
+                    pass
 
         if not allocation:
             allocation = reservation.room_allocations.filter(inventory_unit__isnull=True).first() or reservation.room_allocations.first()
@@ -471,19 +481,23 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 child_count=0
             )
 
-        if 'adult_count' in serializer.validated_data:
+        if 'adult_count' in serializer.validated_data and serializer.validated_data['adult_count'] is not None:
             allocation.adult_count = serializer.validated_data['adult_count']
-        if 'child_count' in serializer.validated_data:
+        if 'child_count' in serializer.validated_data and serializer.validated_data['child_count'] is not None:
             allocation.child_count = serializer.validated_data['child_count']
         if 'meal_plan' in serializer.validated_data and serializer.validated_data['meal_plan']:
             allocation.meal_plan = serializer.validated_data['meal_plan']
+        if 'room_rate' in serializer.validated_data and serializer.validated_data['room_rate'] is not None:
+            allocation.room_rate = serializer.validated_data['room_rate']
+        if 'extra_charge' in serializer.validated_data and serializer.validated_data['extra_charge'] is not None:
+            allocation.extra_charge = serializer.validated_data['extra_charge']
         allocation.save()
 
         try:
             RoomAssignmentEngine.assign_room(
                 tenant=tenant,
                 allocation_id=allocation.id,
-                room_id=room_id,
+                room_id=room.id,
                 user=request.user,
                 upgrade_reason=serializer.validated_data.get('upgrade_reason') or ('Auto-assigned room' if room.inventory_unit_type != allocation.inventory_unit_type else None)
             )
@@ -1025,8 +1039,14 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         serializer = RoomChangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        new_room_id = serializer.validated_data['new_room_id']
-        new_room = InventoryUnit.objects.get(id=new_room_id, tenant=tenant)
+        new_room_id = serializer.validated_data.get('new_room_id') or serializer.validated_data.get('room_id')
+        try:
+            new_room = InventoryUnit.objects.get(id=new_room_id, tenant=tenant)
+        except InventoryUnit.DoesNotExist:
+            try:
+                new_room = InventoryUnit.objects.get(id=new_room_id)
+            except InventoryUnit.DoesNotExist:
+                return Response({'error': f'Room with ID {new_room_id} not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         allocation_id = serializer.validated_data.get('allocation_id')
         allocation = None
@@ -1034,7 +1054,10 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             try:
                 allocation = ReservationInventory.objects.get(id=allocation_id, tenant=tenant)
             except ReservationInventory.DoesNotExist:
-                pass
+                try:
+                    allocation = ReservationInventory.objects.get(id=allocation_id)
+                except ReservationInventory.DoesNotExist:
+                    pass
 
         if not allocation:
             allocation = reservation.room_allocations.first()
@@ -1052,11 +1075,23 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 child_count=0
             )
 
+        if 'adult_count' in serializer.validated_data and serializer.validated_data['adult_count'] is not None:
+            allocation.adult_count = serializer.validated_data['adult_count']
+        if 'child_count' in serializer.validated_data and serializer.validated_data['child_count'] is not None:
+            allocation.child_count = serializer.validated_data['child_count']
+        if 'meal_plan' in serializer.validated_data and serializer.validated_data['meal_plan']:
+            allocation.meal_plan = serializer.validated_data['meal_plan']
+        if 'room_rate' in serializer.validated_data and serializer.validated_data['room_rate'] is not None:
+            allocation.room_rate = serializer.validated_data['room_rate']
+        if 'extra_charge' in serializer.validated_data and serializer.validated_data['extra_charge'] is not None:
+            allocation.extra_charge = serializer.validated_data['extra_charge']
+        allocation.save()
+
         try:
             RoomAssignmentEngine.change_room(
                 tenant=tenant,
                 allocation_id=allocation.id,
-                new_room_id=new_room_id,
+                new_room_id=new_room.id,
                 new_check_in_date=serializer.validated_data.get('new_check_in_date'),
                 new_check_out_date=serializer.validated_data.get('new_check_out_date'),
                 user=request.user
