@@ -701,7 +701,13 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         if not prop:
             prop = Property.objects.filter(tenant=tenant).first()
 
-        prop_bdate = prop.business_date if (prop and prop.business_date) else timezone.localdate()
+        today_local = timezone.localdate()
+        prop_bdate = prop.business_date if (prop and prop.business_date) else today_local
+        if prop_bdate < today_local:
+            prop_bdate = today_local
+            if prop and prop.business_date and prop.business_date < today_local:
+                prop.business_date = today_local
+                prop.save(update_fields=['business_date'])
 
         date_param = request.query_params.get('date') or request.query_params.get('target_date')
         from django.utils.dateparse import parse_date
@@ -787,7 +793,10 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             is_submitted = submitted_event is not None
             submitted_data = submitted_event.payload_diff if submitted_event else None
 
-            can_checkin_today = (prop_bdate >= r.arrival_date)
+            ref_today = base_date
+            can_checkin_today = (ref_today >= r.arrival_date)
+            days_diff = (r.arrival_date - ref_today).days
+            days_until_arrival = max(0, days_diff)
 
             results.append({
                 "id": str(r.id),
@@ -809,7 +818,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 "is_submitted": is_submitted,
                 "submitted_data": submitted_data,
                 "can_checkin_today": can_checkin_today,
-                "days_until_arrival": (r.arrival_date - prop_bdate).days,
+                "days_until_arrival": days_until_arrival,
             })
 
         return Response({
@@ -892,7 +901,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         }
 
         mail_result = UnifiedMailService.send_email(
-            email_type="GENERIC",
+            email_type="SELF_CHECKIN",
             recipient_email=recipient_email,
             recipient_name=guest_name,
             subject=subject,

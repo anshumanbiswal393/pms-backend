@@ -93,7 +93,14 @@ class PublicSelfCheckInVerifyView(APIView):
 
         # Operational date check:
         # Business requirement: Guest can only check in on the arrival date.
-        prop_date = res.property.business_date if (res.property and res.property.business_date) else timezone.localdate()
+        today_local = timezone.localdate()
+        prop_date = res.property.business_date if (res.property and res.property.business_date) else today_local
+        if prop_date < today_local:
+            prop_date = today_local
+            if res.property and res.property.business_date and res.property.business_date < today_local:
+                res.property.business_date = today_local
+                res.property.save(update_fields=['business_date'])
+
         is_arrival_date = (prop_date >= res.arrival_date)
         is_early = (prop_date < res.arrival_date)
         days_until_arrival = (res.arrival_date - prop_date).days if is_early else 0
@@ -213,7 +220,14 @@ class PublicSelfCheckInSubmitView(APIView):
             )
 
         # STRICT ARRIVAL DATE VERIFICATION
-        prop_date = res.property.business_date if (res.property and res.property.business_date) else timezone.localdate()
+        today_local = timezone.localdate()
+        prop_date = res.property.business_date if (res.property and res.property.business_date) else today_local
+        if prop_date < today_local:
+            prop_date = today_local
+            if res.property and res.property.business_date and res.property.business_date < today_local:
+                res.property.business_date = today_local
+                res.property.save(update_fields=['business_date'])
+
         if prop_date < res.arrival_date:
             return Response(
                 {
