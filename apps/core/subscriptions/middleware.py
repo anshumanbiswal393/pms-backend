@@ -19,6 +19,7 @@ class ProductAccessMiddleware(MiddlewareMixin):
             '/api/v1/integrations/',
             '/api/chatbot/',
             '/api/integrations/',
+            '/api/reservations/self-checkin/',
             '/favicon.ico',
         ]
         if any(path.startswith(bp) for bp in bypass_paths):

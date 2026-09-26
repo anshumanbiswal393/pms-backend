@@ -686,6 +686,258 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         serializer = ReservationEventSerializer(events, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    @action(detail=False, methods=['get'], url_path='upcoming-self-checkins')
+    def upcoming_self_checkins(self, request):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        property_id = request.headers.get('X-Property-ID') or request.query_params.get('property_id') or request.query_params.get('property')
+        
+        from apps.core.tenants.models import Property
+        prop = None
+        if property_id:
+            prop = Property.objects.filter(id=property_id, tenant=tenant).first()
+        if not prop:
+            prop = Property.objects.filter(tenant=tenant).first()
+
+        prop_bdate = prop.business_date if (prop and prop.business_date) else timezone.localdate()
+
+        date_param = request.query_params.get('date') or request.query_params.get('target_date')
+        from django.utils.dateparse import parse_date
+        from datetime import datetime, timedelta
+
+        selected_date = None
+        if date_param:
+            if '/' in date_param:
+                try:
+                    selected_date = datetime.strptime(date_param.strip(), '%d/%m/%Y').date()
+                except Exception:
+                    selected_date = None
+            if not selected_date:
+                selected_date = parse_date(date_param.strip())
+
+        base_date = selected_date or prop_bdate
+        end_date = base_date + timedelta(days=2)
+
+        qs = Reservation.objects.filter(
+            tenant=tenant,
+            status__in=['CONFIRMED', 'PENDING', 'GUARANTEED'],
+            arrival_date__gte=base_date,
+            arrival_date__lte=end_date
+        )
+
+        if prop:
+            qs = qs.filter(property=prop)
+
+        search_query = request.query_params.get('search', '').strip()
+        if search_query:
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(confirmation_number__icontains=search_query) |
+                Q(booking_reference__icontains=search_query) |
+                Q(primary_guest__first_name__icontains=search_query) |
+                Q(primary_guest__last_name__icontains=search_query) |
+                Q(primary_guest__contacts__phone__icontains=search_query) |
+                Q(primary_guest__contacts__email__icontains=search_query)
+            ).distinct()
+
+        qs = qs.select_related('primary_guest', 'property').prefetch_related(
+            'room_allocations__inventory_unit',
+            'room_allocations__inventory_unit_type',
+            'primary_guest__contacts',
+            'timeline_events'
+        ).order_by('arrival_date', 'confirmation_number')
+
+        results = []
+        for r in qs:
+            guest = r.primary_guest
+            contact = guest.contacts.filter(is_primary=True).first() or (guest.contacts.first() if guest else None)
+            phone = contact.phone if contact else ""
+            email = contact.email if contact else ""
+            guest_name = f"{getattr(guest, 'salutation', '') or ''} {guest.first_name} {guest.last_name}".strip() if guest else "Valued Guest"
+            
+            allocations = list(r.room_allocations.all())
+            rooms_count = len(allocations) or 1
+            to_arrive_count = sum(1 for a in allocations if a.status != 'CHECKED_IN') if allocations else 1
+
+            check_in_time = r.check_in_time or "12:00 PM"
+            check_out_time = r.check_out_time or "10:00 AM"
+            arr_str = f"{r.arrival_date.strftime('%d-%b')} {check_in_time}"
+            dep_str = f"{r.departure_date.strftime('%d-%b')} {check_out_time}"
+
+            sent_event = r.timeline_events.filter(event_type='SELF_CHECKIN_LINK_SENT').last()
+            is_sent = sent_event is not None
+            sent_at = sent_event.timestamp.isoformat() if sent_event else None
+
+            submitted_event = r.timeline_events.filter(event_type='SELF_CHECKIN_SUBMITTED').last()
+            is_submitted = submitted_event is not None
+            submitted_data = submitted_event.payload_diff if submitted_event else None
+
+            can_checkin_today = (prop_bdate >= r.arrival_date)
+
+            results.append({
+                "id": str(r.id),
+                "reserve_number": r.confirmation_number,
+                "confirmation_number": r.confirmation_number,
+                "status": r.status,
+                "status_display": "Confirmed" if r.status == 'CONFIRMED' else (r.get_status_display() if hasattr(r, 'get_status_display') else r.status),
+                "guest_name": guest_name,
+                "phone": phone,
+                "email": email,
+                "rooms_count": rooms_count,
+                "to_arrive_count": to_arrive_count,
+                "arrival_date": str(r.arrival_date),
+                "departure_date": str(r.departure_date),
+                "arrival_display": arr_str,
+                "departure_display": dep_str,
+                "is_sent": is_sent,
+                "sent_at": sent_at,
+                "is_submitted": is_submitted,
+                "submitted_data": submitted_data,
+                "can_checkin_today": can_checkin_today,
+                "days_until_arrival": (r.arrival_date - prop_bdate).days,
+            })
+
+        return Response({
+            "base_date": str(base_date),
+            "base_date_display": base_date.strftime('%d/%m/%Y'),
+            "property_business_date": str(prop_bdate),
+            "upcoming_days": [
+                str(base_date),
+                str(base_date + timedelta(days=1)),
+                str(base_date + timedelta(days=2))
+            ],
+            "total_count": len(results),
+            "reservations": results
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='send-self-checkin')
+    def send_self_checkin(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+        guest = reservation.primary_guest
+        contact = guest.contacts.filter(is_primary=True).first() or (guest.contacts.first() if guest else None)
+        
+        recipient_email = (request.data.get('email') or (contact.email if contact else '')).strip()
+        if not recipient_email or '@' not in recipient_email:
+            return Response(
+                {'error': 'A valid recipient email address is required to send self check-in link.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        frontend_origin = request.headers.get('Origin') or request.headers.get('Referer')
+        if frontend_origin:
+            from urllib.parse import urlparse
+            parsed = urlparse(frontend_origin)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+        else:
+            base_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+
+        self_checkin_url = f"{base_url}/self-checkin?id={reservation.id}&confirmation={reservation.confirmation_number}"
+
+        guest_name = f"{getattr(guest, 'salutation', '') or ''} {guest.first_name} {guest.last_name}".strip() if guest else "Valued Guest"
+        hotel_name = reservation.property.name if reservation.property else "Hotel"
+        arrival_formatted = reservation.arrival_date.strftime('%d %b %Y') if reservation.arrival_date else "N/A"
+        departure_formatted = reservation.departure_date.strftime('%d %b %Y') if reservation.departure_date else "N/A"
+
+        from apps.core.common.email_service import UnifiedMailService
+        subject = f"Self Check-In Invitation for Reservation #{reservation.confirmation_number} - {hotel_name}"
+        
+        email_data = {
+            "title": f"Online Self Check-in: {hotel_name}",
+            "reservation_id": reservation.confirmation_number,
+            "guest_name": guest_name,
+            "arrival_date": arrival_formatted,
+            "departure_date": departure_formatted,
+            "check_in_time": reservation.check_in_time or "12:00 PM",
+            "check_out_time": reservation.check_out_time or "10:00 AM",
+            "self_checkin_url": self_checkin_url,
+            "action_url": self_checkin_url,
+            "action_text": "Complete Self Check-In",
+            "body": f"""
+                <p>Dear <strong>{guest_name}</strong>,</p>
+                <p>We are delighted to welcome you soon to <strong>{hotel_name}</strong>!</p>
+                <p>To ensure a smooth, contactless arrival, we invite you to complete your <strong>Guest Self Check-In</strong> in advance.</p>
+                <div style="background-color: #f1f5f9; padding: 16px; border-radius: 8px; margin: 20px 0; font-family: sans-serif; font-size: 14px;">
+                    <p style="margin: 0 0 8px 0;"><strong>Reservation #:</strong> {reservation.confirmation_number}</p>
+                    <p style="margin: 0 0 8px 0;"><strong>Arrival Date:</strong> {arrival_formatted} (from {reservation.check_in_time or '12:00 PM'})</p>
+                    <p style="margin: 0 0 8px 0;"><strong>Departure Date:</strong> {departure_formatted} (until {reservation.check_out_time or '10:00 AM'})</p>
+                </div>
+                <div style="text-align: center; margin: 30px 0;">
+                    <a href="{self_checkin_url}" style="background-color: #4f46e5; color: #ffffff; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 700; font-size: 15px; display: inline-block;">
+                        🚀 Complete Self Check-In Now
+                    </a>
+                </div>
+                <p style="font-size: 13px; color: #64748b;">
+                    <em>Note: Digital check-in unlocks on your scheduled arrival date ({arrival_formatted}). You can fill in your ID details and arrival preferences anytime.</em>
+                </p>
+            """
+        }
+
+        mail_result = UnifiedMailService.send_email(
+            email_type="GENERIC",
+            recipient_email=recipient_email,
+            recipient_name=guest_name,
+            subject=subject,
+            property_obj=reservation.property,
+            data=email_data
+        )
+
+        ReservationEvent.objects.create(
+            tenant=tenant,
+            reservation=reservation,
+            event_type='SELF_CHECKIN_LINK_SENT',
+            description=f"Self check-in link dispatched via email to {recipient_email}",
+            actor_user=request.user if request.user.is_authenticated else None,
+            payload_diff={
+                "email": recipient_email,
+                "link": self_checkin_url,
+                "sent_at": timezone.now().isoformat(),
+                "mail_service_result": mail_result
+            }
+        )
+
+        return Response({
+            "success": True,
+            "message": f"Self check-in link successfully sent to {recipient_email}",
+            "recipient_email": recipient_email,
+            "link": self_checkin_url
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='approve-self-checkin')
+    def approve_self_checkin(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+        
+        try:
+            from apps.features.reservations.services import CheckInCheckOutEngine
+            updated = CheckInCheckOutEngine.check_in(
+                tenant=tenant,
+                reservation_id=reservation.id,
+                user=request.user if request.user.is_authenticated else None
+            )
+            ReservationEvent.objects.create(
+                tenant=tenant,
+                reservation=reservation,
+                event_type='SELF_CHECKIN_APPROVED',
+                description=f"Self check-in verified and checked in by staff member {request.user.get_full_name() if request.user.is_authenticated else 'Staff'}",
+                actor_user=request.user if request.user.is_authenticated else None
+            )
+        except DjangoValidationError as e:
+            handle_django_validation_error(e)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        output = self.get_serializer(updated)
+        return Response(output.data, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=['post'], url_path='add-guest')
     def add_guest(self, request, pk=None):
         tenant = getattr(request, 'tenant', None)
