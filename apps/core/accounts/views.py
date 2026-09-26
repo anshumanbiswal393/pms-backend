@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import models, transaction, IntegrityError
 from rest_framework import viewsets, permissions, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -279,6 +279,48 @@ class UserViewSet(viewsets.ModelViewSet):
             return AppUser.objects.none()
         return AppUser.objects.filter(tenant=tenant, deleted_at__isnull=True)
 
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except IntegrityError as e:
+            err_msg = str(e).lower()
+            if 'username' in err_msg:
+                return Response(
+                    {'error': 'A staff member with this username already exists.', 'username': ['Username is already taken.']},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if 'email' in err_msg:
+                return Response(
+                    {'error': 'A staff member with this email already exists.', 'email': ['Email is already taken.']},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            return Response(
+                {'error': 'A record with this information already exists.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        try:
+            return super().update(request, *args, **kwargs)
+        except IntegrityError as e:
+            err_msg = str(e).lower()
+            if 'username' in err_msg:
+                return Response(
+                    {'error': 'A staff member with this username already exists.', 'username': ['Username is already taken.']},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if 'email' in err_msg:
+                return Response(
+                    {'error': 'A staff member with this email already exists.', 'email': ['Email is already taken.']},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            return Response(
+                {'error': 'A record with this information already exists.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
     def perform_create(self, serializer):
         tenant = getattr(self.request, 'tenant', None)
         user = serializer.save(
@@ -286,11 +328,16 @@ class UserViewSet(viewsets.ModelViewSet):
             created_by=self.request.user if self.request.user.is_authenticated else None
         )
         if tenant and user.role:
-            UserAssignment.objects.update_or_create(
-                user=user,
-                tenant=tenant,
-                defaults={'role': user.role}
-            )
+            assignments = UserAssignment.objects.filter(user=user, tenant=tenant)
+            if assignments.exists():
+                assignments.update(role=user.role)
+            else:
+                UserAssignment.objects.create(
+                    user=user,
+                    tenant=tenant,
+                    role=user.role,
+                    property=None
+                )
 
     def perform_update(self, serializer):
         user = serializer.save(
@@ -298,11 +345,16 @@ class UserViewSet(viewsets.ModelViewSet):
         )
         tenant = getattr(self.request, 'tenant', None)
         if tenant and user.role:
-            UserAssignment.objects.update_or_create(
-                user=user,
-                tenant=tenant,
-                defaults={'role': user.role}
-            )
+            assignments = UserAssignment.objects.filter(user=user, tenant=tenant)
+            if assignments.exists():
+                assignments.update(role=user.role)
+            else:
+                UserAssignment.objects.create(
+                    user=user,
+                    tenant=tenant,
+                    role=user.role,
+                    property=None
+                )
 
 
 @extend_schema(request=PasswordLoginRequestSerializer, responses={200: dict})
