@@ -709,30 +709,43 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
 
         selected_date = None
         if date_param:
-            if '/' in date_param:
+            dp_str = str(date_param).strip()
+            if '/' in dp_str:
                 try:
-                    selected_date = datetime.strptime(date_param.strip(), '%d/%m/%Y').date()
+                    selected_date = datetime.strptime(dp_str, '%d/%m/%Y').date()
                 except Exception:
-                    selected_date = None
+                    pass
             if not selected_date:
-                selected_date = parse_date(date_param.strip())
+                try:
+                    selected_date = parse_date(dp_str)
+                except Exception:
+                    pass
 
         base_date = selected_date or prop_bdate
         end_date = base_date + timedelta(days=2)
 
+        from django.db.models import Q
+        active_status_q = (
+            Q(status__iexact='CONFIRMED') | 
+            Q(status__iexact='PENDING') | 
+            Q(status__iexact='GUARANTEED')
+        )
+
         qs = Reservation.objects.filter(
-            tenant=tenant,
-            status__in=['CONFIRMED', 'PENDING', 'GUARANTEED'],
+            tenant=tenant
+        ).filter(
+            active_status_q,
             arrival_date__gte=base_date,
             arrival_date__lte=end_date
         )
 
         if prop:
-            qs = qs.filter(property=prop)
+            prop_qs = qs.filter(property=prop)
+            if prop_qs.exists():
+                qs = prop_qs
 
         search_query = request.query_params.get('search', '').strip()
         if search_query:
-            from django.db.models import Q
             qs = qs.filter(
                 Q(confirmation_number__icontains=search_query) |
                 Q(booking_reference__icontains=search_query) |
