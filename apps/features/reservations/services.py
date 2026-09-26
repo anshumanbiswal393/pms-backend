@@ -708,6 +708,9 @@ class BookingEngine:
                 ec_amt = Decimal(str(ec.get('amount') or 0))
                 if ec_amt > Decimal('0.00'):
                     ec_desc = ec.get('description') or 'Extra Charge'
+                    # Prevent duplicate creation if room extra charges were already recorded per allocation
+                    if ec_desc.startswith("Extra Guest Charge (") and any((a.get('extra_charge') or a.get('extraCharge')) for a in booking_data.get('allocations', [])):
+                        continue
                     ec_tax_type = ec.get('taxType') or ec.get('tax_type') or 'Excluded'
                     ec_tax_percent = Decimal(str(ec.get('taxPercent') or ec.get('tax_percent') or 0))
                     ec_date = ec.get('date') or reservation.arrival_date
@@ -1808,6 +1811,7 @@ class PricingEngine:
                 unit_type = InventoryUnitType.objects.get(id=alloc.get('inventory_unit_type_id'), tenant=tenant)
                 unit_type_name = unit_type.name
             except Exception:
+                unit_type = None
                 unit_type_name = "Room"
                 
             alloc_total = Decimal('0.00')
@@ -1815,24 +1819,6 @@ class PricingEngine:
             for rate_day in alloc.get('nightly_rates', []):
                 amt = Decimal(str(rate_day.get('amount', 0)))
                 alloc_total += amt
-            
-            per_night_tariff = alloc_total / Decimal(str(night_count))
-            guest_cnt = alloc.get('adult_count', 2) + alloc.get('child_count', 0)
-            alloc_tax, tax_lbl = calculate_item_tax(
-                tenant=tenant,
-                item_price=alloc_total,
-                per_night_tariff=per_night_tariff,
-                guests_count=guest_cnt
-            )
-            if tax_lbl and tax_lbl not in matched_tax_labels:
-                matched_tax_labels.append(tax_lbl)
-
-            breakdown.append({
-                'label': f"Room Charges ({unit_type_name})",
-                'amount': float(alloc_total)
-            })
-            total_amount += alloc_total
-            tax_amount += alloc_tax
 
             # Extra Adult & Extra Child Calculation
             adult_count = int(alloc.get('adult_count', 2) or 2)
@@ -1845,7 +1831,7 @@ class PricingEngine:
             extra_adult_rate = Decimal('0.00')
             extra_child_rate = Decimal('0.00')
 
-            if rate_plan_id and hasattr(unit_type, 'id'):
+            if rate_plan_id and unit_type and hasattr(unit_type, 'id'):
                 try:
                     from apps.features.rates.models import RatePlanInventoryType
                     rpi = RatePlanInventoryType.objects.filter(
@@ -1859,9 +1845,83 @@ class PricingEngine:
                 except Exception:
                     pass
 
+            if extra_adult_rate == Decimal('0.00') and unit_type:
+                extra_adult_rate = Decimal(str(
+                    getattr(unit_type, 'extra_adult_charge', None) or 
+                    getattr(unit_type, 'extra_adult_price', None) or 
+                    getattr(unit_type, 'extra_bed_price', None) or 
+                    getattr(unit_type, 'extra_bed_charge', None) or 0
+                ))
+            if extra_child_rate == Decimal('0.00') and unit_type:
+                extra_child_rate = Decimal(str(
+                    getattr(unit_type, 'extra_child_charge', None) or 
+                    getattr(unit_type, 'extra_child_price', None) or 0
+                ))
+
             extra_adult_total = Decimal(str(extra_adults)) * extra_adult_rate * Decimal(str(night_count))
             extra_child_total = Decimal(str(extra_children)) * extra_child_rate * Decimal(str(night_count))
-            custom_extra_total = Decimal(str(alloc.get('extra_charge', 0) or 0)) * Decimal(str(night_count))
+            custom_extra_input = Decimal(str(alloc.get('extra_charge', 0) or 0)) * Decimal(str(night_count))
+
+            # If rate wasn't found in DB, but custom_extra_input was provided for extra adults
+            if extra_adult_total == Decimal('0.00') and extra_adults > 0 and custom_extra_input > Decimal('0.00'):
+                extra_adult_total = custom_extra_input
+                custom_extra_input = Decimal('0.00')
+
+            # Prevent double-counting: custom_extra_input from room card usually includes extra adult/child charges
+            remaining_custom_extra = max(Decimal('0.00'), custom_extra_input - (extra_adult_total + extra_child_total))
+
+            # Room discount handling
+            alloc_disc_pct = Decimal(str(alloc.get('discount_percent', 0) or 0))
+            alloc_disc_amt = Decimal('0.00')
+            if alloc_disc_pct > Decimal('0.00'):
+                alloc_disc_amt = (alloc_total * alloc_disc_pct) / Decimal('100.0')
+
+            # Combined taxable base for this room allocation
+            room_taxable_total = max(
+                Decimal('0.00'),
+                alloc_total - alloc_disc_amt + extra_adult_total + extra_child_total + remaining_custom_extra
+            )
+            per_night_tariff = room_taxable_total / Decimal(str(night_count))
+            guest_cnt = alloc.get('adult_count', 2) + alloc.get('child_count', 0)
+
+            # Check if allocation has custom tax percentage from room selection
+            alloc_tax_pct = alloc.get('tax_percent')
+            if alloc_tax_pct is not None and str(alloc_tax_pct).strip() != '' and str(alloc_tax_pct).strip().lower() != 'none':
+                try:
+                    pct = Decimal(str(alloc_tax_pct))
+                    alloc_tax = (room_taxable_total * pct) / Decimal('100.0')
+                    tax_lbl = f"GST {pct:.0f}%" if pct == pct.to_integral() else f"GST {pct}%"
+                except Exception:
+                    alloc_tax, tax_lbl = calculate_item_tax(
+                        tenant=tenant,
+                        item_price=room_taxable_total,
+                        per_night_tariff=per_night_tariff,
+                        guests_count=guest_cnt
+                    )
+            else:
+                alloc_tax, tax_lbl = calculate_item_tax(
+                    tenant=tenant,
+                    item_price=room_taxable_total,
+                    per_night_tariff=per_night_tariff,
+                    guests_count=guest_cnt
+                )
+
+            if tax_lbl and tax_lbl not in matched_tax_labels:
+                matched_tax_labels.append(tax_lbl)
+
+            breakdown.append({
+                'label': f"Room Charges ({unit_type_name})",
+                'amount': float(alloc_total)
+            })
+            total_amount += alloc_total
+            tax_amount += alloc_tax
+
+            if alloc_disc_amt > Decimal('0.00'):
+                breakdown.append({
+                    'label': "Room Discount",
+                    'amount': float(-alloc_disc_amt)
+                })
+                total_amount -= alloc_disc_amt
 
             if extra_adult_total > 0:
                 breakdown.append({
@@ -1877,12 +1937,12 @@ class PricingEngine:
                 })
                 total_amount += extra_child_total
 
-            if custom_extra_total > 0:
+            if remaining_custom_extra > 0:
                 breakdown.append({
                     'label': "Extra Guest Charges",
-                    'amount': float(custom_extra_total)
+                    'amount': float(remaining_custom_extra)
                 })
-                total_amount += custom_extra_total
+                total_amount += remaining_custom_extra
             
         # Add packages
         for pkg_id in data.get('packages', []):
