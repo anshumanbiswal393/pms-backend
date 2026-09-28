@@ -74,6 +74,8 @@ class InventoryUnitTypeViewSet(RedisCacheMixin, viewsets.ModelViewSet):
     serializer_class = InventoryUnitTypeSerializer
     filterset_class = InventoryUnitTypeFilter
     search_fields = ['code', 'name']
+    ordering_fields = ['name', 'code', 'created_at', 'updated_at']
+    ordering = ['-updated_at', '-created_at']
     
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
@@ -84,7 +86,7 @@ class InventoryUnitTypeViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
             return InventoryUnitType.objects.none()
-        return InventoryUnitType.objects.filter(tenant=tenant)
+        return InventoryUnitType.objects.filter(tenant=tenant).order_by('-updated_at', '-created_at')
 
     @action(detail=True, methods=['post'], permission_classes=[CanCloneInventoryType])
     def clone(self, request, pk=None):
