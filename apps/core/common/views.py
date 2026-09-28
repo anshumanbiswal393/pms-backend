@@ -196,6 +196,14 @@ class BookingSourceViewSet(viewsets.ModelViewSet):
     queryset = BookingSource.objects.all()
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_queryset(self):
+        qs = BookingSource.objects.all()
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            from django.db.models import Q
+            qs = qs.filter(Q(name__icontains=search) | Q(details__icontains=search))
+        return qs.order_by('-created_at')
+
     def perform_create(self, serializer):
         instance = serializer.save()
         try:

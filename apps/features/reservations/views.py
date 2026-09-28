@@ -45,7 +45,16 @@ class CorporateAccountViewSet(viewsets.ModelViewSet):
             tenant = Tenant.objects.first()
         if not tenant:
             return CorporateAccount.objects.none()
-        return CorporateAccount.objects.filter(tenant=tenant)
+        qs = CorporateAccount.objects.filter(tenant=tenant)
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(company_name__icontains=search) |
+                Q(negotiated_rate_code__icontains=search) |
+                Q(contact_person__icontains=search)
+            )
+        return qs.order_by('-created_at')
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, 'tenant', None)
@@ -250,8 +259,18 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 Q(primary_guest__last_name__icontains=search) |
                 Q(primary_guest__contacts__phone__icontains=search) |
                 Q(primary_guest__contacts__value__icontains=search) |
-                Q(group_block__name__icontains=search)
+                Q(group_block__name__icontains=search) |
+                Q(room_allocations__inventory_unit__name__icontains=search)
             ).distinct()
+
+        # Opened Folio filter (active folios: checked in or has open balance)
+        opened_folio = q_params.get('opened_folio')
+        if opened_folio in ['true', '1', True]:
+            qs = qs.filter(
+                models.Q(status='CHECKED_IN') |
+                ~models.Q(balance_amount=0) |
+                ~models.Q(total_amount=models.F('paid_amount'))
+            )
 
         # Status filter
         status_val = q_params.get('status')
