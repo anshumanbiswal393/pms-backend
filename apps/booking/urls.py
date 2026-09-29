@@ -14,6 +14,7 @@ urlpatterns = [
     path('hotels/<str:slug>/inventory/', views.hotel_inventory, name='hotel_inventory'),
     path('hotels/<str:slug>/update_settings/', views.update_hotel_settings, name='update_hotel_settings'),
     path('hotels/<str:slug>/', views.hotel_detail, name='hotel_detail'),
+    path('hotels/<str:slug>', views.hotel_detail, name='hotel_detail_no_slash'),
     path('bookings/send-invoice-notification/', views.send_invoice_notification_view, name='send_invoice_notification'),
     path('bookings/<str:ref>/', views.get_booking_detail, name='get_booking_detail'),
     path('bookings/', views.create_booking, name='create_booking'),

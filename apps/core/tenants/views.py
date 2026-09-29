@@ -34,11 +34,27 @@ class TenantViewSet(viewsets.ModelViewSet):
 
 class SuperadminPropertyViewSet(viewsets.ModelViewSet):
     """
-    Super-Admin CRUD endpoint for managing Properties across all tenants.
+    Super-Admin and Booking Engine CRUD endpoint for managing Properties across all tenants.
     """
     queryset = Property.objects.all()
     serializer_class = SuperadminPropertySerializer
-    permission_classes = [permissions.IsAdminUser]
+
+    def get_permissions(self):
+        # Allow read operations (list/retrieve) for all requests including booking engine and PMS dashboards
+        if self.action in ['list', 'retrieve']:
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return Property.objects.filter(is_active=True)
+        if user.is_superuser or user.is_staff:
+            return Property.objects.all()
+        tenant = getattr(user, 'tenant', None)
+        if tenant:
+            return Property.objects.filter(tenant=tenant)
+        return Property.objects.all()
 
     def perform_create(self, serializer):
         user = self.request.user if self.request.user.is_authenticated else None

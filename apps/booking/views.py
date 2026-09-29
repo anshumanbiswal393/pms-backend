@@ -81,28 +81,70 @@ def resolve_hotel(request):
 
 
 def fetch_pms_property_by_slug(slug_lower):
-    # Direct native in-process PMS database query
+    # Direct native in-process PMS database query with multi-tier matching
     try:
         from apps.core.tenants.models import Property as PmsProperty
-        slug_lower = str(slug_lower).strip().lower()
-        target_clean = re.sub(r'[^a-z0-9]', '', slug_lower)
-        if not target_clean:
+        slug_raw = str(slug_lower or '').strip().strip('/').lower()
+        if not slug_raw:
             return None
 
-        # Exact match pass on slug, name slug, id, or hotel_id
-        for prop in PmsProperty.objects.all():
+        slug_clean = re.sub(r'[^a-z0-9]', '', slug_raw)
+        # Strip prefixes/suffixes like 'hotel-', 'resort-', etc.
+        slug_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', slug_raw)
+        slug_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', slug_core).strip()
+        slug_core_clean = re.sub(r'[^a-z0-9]', '', slug_core)
+
+        all_props = list(PmsProperty.objects.all())
+        if not all_props:
+            return None
+
+        # Pass 1: Exact matches on slug, name, ID, or hotel_id
+        for prop in all_props:
             prop_settings = prop.booking_engine_settings or {}
             p_slug = str(prop_settings.get('slug') or getattr(prop, 'slug', '') or prop.name.lower().replace(' ', '-')).strip().lower()
             p_name = str(prop.name).strip().lower()
-            pslug_clean = re.sub(r'[^a-z0-9]', '', p_slug)
-            pname_clean = re.sub(r'[^a-z0-9]', '', p_name)
+            p_id = str(prop.id).lower()
+            p_hotel_id = str(getattr(prop, 'hotel_id', '') or '').lower()
 
-            if slug_lower == p_slug or slug_lower == p_name:
+            if slug_raw in (p_slug, p_name, p_id, p_hotel_id):
                 return prop
-            if target_clean == pslug_clean or target_clean == pname_clean:
-                return prop
-            if str(prop.id).lower() == slug_lower or getattr(prop, 'hotel_id', '').lower() == slug_lower:
-                return prop
+
+        # Pass 2: Clean alphanumeric exact match
+        if slug_clean:
+            for prop in all_props:
+                prop_settings = prop.booking_engine_settings or {}
+                p_slug = str(prop_settings.get('slug') or getattr(prop, 'slug', '') or prop.name.lower().replace(' ', '-')).strip().lower()
+                p_name = str(prop.name).strip().lower()
+                pslug_clean = re.sub(r'[^a-z0-9]', '', p_slug)
+                pname_clean = re.sub(r'[^a-z0-9]', '', p_name)
+
+                if slug_clean in (pslug_clean, pname_clean):
+                    return prop
+
+        # Pass 3: Core stripped prefix/suffix match (e.g. "hotel-xyz" vs "xyz" or "xyz-hotel")
+        if slug_core_clean:
+            for prop in all_props:
+                prop_settings = prop.booking_engine_settings or {}
+                p_slug = str(prop_settings.get('slug') or getattr(prop, 'slug', '') or prop.name.lower().replace(' ', '-')).strip().lower()
+                p_name = str(prop.name).strip().lower()
+                p_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', p_slug)
+                p_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', p_core).strip()
+                p_core_clean = re.sub(r'[^a-z0-9]', '', p_core)
+
+                p_name_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)\s*', '', p_name)
+                p_name_core = re.sub(r'\s*(hotel|resort|stay|villa|property|pms|demo)$', '', p_name_core).strip()
+                p_name_core_clean = re.sub(r'[^a-z0-9]', '', p_name_core)
+
+                if slug_core_clean in (p_core_clean, p_name_core_clean) or slug_clean in (p_core_clean, p_name_core_clean):
+                    return prop
+
+        # Pass 4: Substring containment for multi-word property names (min 3 chars)
+        if len(slug_clean) >= 3:
+            for prop in all_props:
+                p_name = str(prop.name).strip().lower()
+                pname_clean = re.sub(r'[^a-z0-9]', '', p_name)
+                if (slug_clean in pname_clean or pname_clean in slug_clean) and len(pname_clean) >= 3:
+                    return prop
 
     except Exception as e:
         print(f"Notice: Native PMS property fetch error: {e}")
@@ -115,29 +157,44 @@ def sync_hotel_from_pms(hotel, pms_p):
 
 
 def get_or_create_hotel_tenant(slug):
-    slug_lower = str(slug or '').lower().strip()
-    if not slug_lower:
-        slug_lower = 'retrod'
+    slug_raw = urllib.parse.unquote(str(slug or '')).strip().strip('/').lower()
+    if not slug_raw:
+        slug_raw = 'retrod'
 
     # 1. Try fetching real property details from PMS
-    prop = fetch_pms_property_by_slug(slug_lower)
+    prop = fetch_pms_property_by_slug(slug_raw)
     if prop:
         return sync_pms_property_to_booking_engine(prop)
 
     # 2. Check if Hotel exists in apps.booking DB
-    hotel = Hotel.objects.filter(slug__iexact=slug_lower).first()
+    hotel = Hotel.objects.filter(slug__iexact=slug_raw).first()
     if not hotel:
-        target_clean = re.sub(r'[^a-z0-9]', '', slug_lower)
-        if target_clean:
-            for h in Hotel.objects.all():
-                if re.sub(r'[^a-z0-9]', '', h.slug) == target_clean:
-                    hotel = h
-                    break
+        slug_clean = re.sub(r'[^a-z0-9]', '', slug_raw)
+        slug_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', slug_raw)
+        slug_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', slug_core).strip()
+        slug_core_clean = re.sub(r'[^a-z0-9]', '', slug_core)
+
+        for h in Hotel.objects.all():
+            h_slug_clean = re.sub(r'[^a-z0-9]', '', h.slug)
+            h_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', h.slug)
+            h_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', h_core).strip()
+            h_core_clean = re.sub(r'[^a-z0-9]', '', h_core)
+
+            if slug_clean and slug_clean == h_slug_clean:
+                hotel = h
+                break
+            if slug_core_clean and (slug_core_clean == h_core_clean or slug_clean == h_core_clean or slug_core_clean == h_slug_clean):
+                hotel = h
+                break
+            if str(h.id).lower() == slug_raw:
+                hotel = h
+                break
+
     if hotel:
         return hotel
 
-    # 3. If generic root query ('demo-retrod', 'retrod', 'demo', '') and no specific hotel found, load first PMS property
-    if slug_lower in ['demo-retrod', 'retrod', 'demo', '']:
+    # 3. If generic root query ('demo-retrod', 'retrod', 'demo', 'default', '') and no specific hotel found, load first PMS property
+    if slug_raw in ['demo-retrod', 'retrod', 'demo', 'default', 'hotel', '']:
         from apps.core.tenants.models import Property as PmsProperty
         first_p = PmsProperty.objects.first()
         if first_p:
@@ -149,7 +206,8 @@ def get_or_create_hotel_tenant(slug):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def hotel_detail(request, slug=None):
-    target_slug = (slug or get_slug_from_request(request)).lower()
+    raw_slug = str(slug or get_slug_from_request(request) or '').strip().strip('/')
+    target_slug = urllib.parse.unquote(raw_slug).lower()
     hotel = get_or_create_hotel_tenant(target_slug)
     if not hotel:
         return Response({'success': False, 'message': 'Hotel not found'}, status=status.HTTP_404_NOT_FOUND)
