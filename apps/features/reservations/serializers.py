@@ -600,9 +600,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
         return resolve_booking_source_icon(source_name)
 
     def get_grand_total(self, obj):
-        from decimal import Decimal
-        total = (obj.total_amount or Decimal('0.00')) + (obj.tax_amount or Decimal('0.00')) - (obj.discount_amount or Decimal('0.00'))
-        return str(total)
+        return str(obj.gross_total)
 
     def get_primary_guest_name(self, obj):
         return get_reservation_meta(obj)['name']
@@ -736,9 +734,7 @@ class ReservationSerializer(serializers.ModelSerializer):
         return resolve_booking_source_icon(source_name)
 
     def get_grand_total(self, obj):
-        from decimal import Decimal
-        total = (obj.total_amount or Decimal('0.00')) + (obj.tax_amount or Decimal('0.00')) - (obj.discount_amount or Decimal('0.00'))
-        return str(total)
+        return str(obj.gross_total)
 
     def get_primary_guest_name(self, obj):
         return get_reservation_meta(obj)['name']

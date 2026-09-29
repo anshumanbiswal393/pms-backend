@@ -197,6 +197,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 'room_allocations__guests__guest__documents',
                 'primary_guest__contacts',
                 'primary_guest__documents',
+                'extra_charges',
             )
         else:
             qs = Reservation.objects.filter(tenant=tenant).select_related(
