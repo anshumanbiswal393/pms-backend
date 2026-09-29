@@ -46,15 +46,8 @@ class SuperadminPropertyViewSet(viewsets.ModelViewSet):
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
-        user = self.request.user
-        if not user or not user.is_authenticated:
-            return Property.objects.filter(is_active=True)
-        if user.is_superuser or user.is_staff:
-            return Property.objects.all()
-        tenant = getattr(user, 'tenant', None)
-        if tenant:
-            return Property.objects.filter(tenant=tenant)
-        return Property.objects.all()
+        # Always return all properties in the system so all created hotels are listed in the table
+        return Property.objects.all().order_by('-created_at')
 
     def perform_create(self, serializer):
         user = self.request.user if self.request.user.is_authenticated else None
