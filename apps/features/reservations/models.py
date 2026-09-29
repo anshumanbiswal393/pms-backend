@@ -139,8 +139,7 @@ class Reservation(BaseModel):
     def __str__(self):
         return f"{self.confirmation_number} - {self.primary_guest.first_name if self.primary_guest else ''} {self.primary_guest.last_name if self.primary_guest else ''}"
 
-    @property
-    def gross_total(self):
+    def get_gross_total(self):
         from decimal import Decimal
         extra_sum = Decimal('0.00')
         try:
