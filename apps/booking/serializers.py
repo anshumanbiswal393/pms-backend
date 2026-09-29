@@ -117,6 +117,15 @@ class HotelSerializer(serializers.ModelSerializer):
         settings = obj.booking_engine_settings or {}
         return settings.get('google_reviews_embed_code') or ''
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # If google_rating is 0.0 or 0, return null so frontend knows no rating was configured
+        if data.get('google_rating') in [0, 0.0, '0.0', '0.00', '0', None]:
+            data['google_rating'] = None
+        if data.get('total_reviews') in [0, '0', None]:
+            data['total_reviews'] = None
+        return data
+
 class GuestSerializer(serializers.ModelSerializer):
     class Meta:
         model = Guest

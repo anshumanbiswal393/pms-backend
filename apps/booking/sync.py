@@ -84,50 +84,48 @@ def sync_pms_property_to_booking_engine(prop_or_dict):
     hero_slides = settings.get('hero_slides') or []
     hero_url = hero_slides[0] if hero_slides else (pms_p.get('image_url') or "")
 
-    hotel.name = settings.get('name') or pms_p.get('name') or hotel.name or canonical_slug.replace('-', ' ').title()
-    hotel.tagline = settings.get('tagline') or hotel.tagline or "Experience Luxury & Comfort Redefined"
+    hotel.name = settings.get('name') or pms_p.get('name') or canonical_slug.replace('-', ' ').title()
+    hotel.tagline = settings.get('tagline') or ''
     
-    about_desc = settings.get('about_description') or pms_p.get('description') or hotel.description or f"Welcome to {hotel.name} – offering luxury accommodations, guest facilities, and fine dining."
+    about_desc = settings.get('about_description') or pms_p.get('description') or ''
     hotel.description = about_desc
     hotel.short_description = (
         settings.get('google_editorial_summary') or
         pms_p.get('short_description') or
         settings.get('about_description') or
-        hotel.short_description or
-        about_desc
+        pms_p.get('description') or
+        ''
     )
 
-    hotel.address = pms_p.get('address_line_1') or settings.get('address') or hotel.address or ""
-    hotel.city = pms_p.get('city') or settings.get('city') or hotel.city or ""
-    hotel.state = pms_p.get('state') or settings.get('state') or hotel.state or ""
-    hotel.pincode = pms_p.get('postal_code') or settings.get('pincode') or hotel.pincode or ""
-    hotel.phone = pms_p.get('contact_phone') or settings.get('phone') or hotel.phone or "+91 98765 43210"
-    hotel.email = pms_p.get('contact_email') or settings.get('email') or hotel.email or f"stay@{canonical_slug}.com"
-    hotel.whatsapp = settings.get('whatsapp') or pms_p.get('contact_phone') or hotel.whatsapp or hotel.phone
+    hotel.address = pms_p.get('address_line_1') or settings.get('address') or ''
+    hotel.city = pms_p.get('city') or settings.get('city') or ''
+    hotel.state = pms_p.get('state') or settings.get('state') or ''
+    hotel.pincode = pms_p.get('postal_code') or settings.get('pincode') or ''
+    hotel.phone = pms_p.get('contact_phone') or settings.get('phone') or ''
+    hotel.email = pms_p.get('contact_email') or settings.get('email') or ''
+    hotel.whatsapp = settings.get('whatsapp') or pms_p.get('contact_phone') or settings.get('phone') or ''
 
     pms_checkin = parse_time_string(pms_p.get('check_in_time') or settings.get('check_in_time'))
     pms_checkout = parse_time_string(pms_p.get('check_out_time') or settings.get('check_out_time'))
-    if pms_checkin:
-        hotel.check_in_time = pms_checkin
-    if pms_checkout:
-        hotel.check_out_time = pms_checkout
+    hotel.check_in_time = pms_checkin or '12:00 PM'
+    hotel.check_out_time = pms_checkout or '11:00 AM'
 
-    hotel.map_embed_url = settings.get('google_map_url') or pms_p.get('google_map_url') or hotel.map_embed_url or ""
-    hotel.logo_url = settings.get('logo_url') or settings.get('website_logo') or pms_p.get('website_logo') or pms_p.get('logo_url') or hotel.logo_url or ""
-    hotel.hero_banner_url = hero_url or hotel.hero_banner_url or ""
+    hotel.map_embed_url = settings.get('google_map_url') or pms_p.get('google_map_url') or ''
+    hotel.logo_url = settings.get('logo_url') or settings.get('website_logo') or pms_p.get('website_logo') or pms_p.get('logo_url') or ''
+    hotel.hero_banner_url = hero_url or ''
 
     # Social links
-    hotel.facebook_url = settings.get('facebook_url') or settings.get('facebook') or hotel.facebook_url or ""
-    hotel.instagram_url = settings.get('instagram_url') or settings.get('instagram') or hotel.instagram_url or ""
-    hotel.twitter_url = settings.get('twitter_url') or settings.get('twitter') or hotel.twitter_url or ""
-    hotel.linkedin_url = settings.get('linkedin_url') or settings.get('linkedin') or hotel.linkedin_url or ""
-    hotel.youtube_url = settings.get('youtube_url') or settings.get('youtube') or hotel.youtube_url or ""
+    hotel.facebook_url = settings.get('facebook_url') or settings.get('facebook') or ''
+    hotel.instagram_url = settings.get('instagram_url') or settings.get('instagram') or ''
+    hotel.twitter_url = settings.get('twitter_url') or settings.get('twitter') or ''
+    hotel.linkedin_url = settings.get('linkedin_url') or settings.get('linkedin') or ''
+    hotel.youtube_url = settings.get('youtube_url') or settings.get('youtube') or ''
 
     # Theming & Storytelling
-    hotel.page_title = settings.get('page_title') or hotel.page_title or f"Welcome to {hotel.name}"
-    hotel.theme_color = settings.get('theme_color') or hotel.theme_color or "#ffc107"
-    hotel.what_makes_special = settings.get('what_makes_special') or hotel.what_makes_special or ""
-    hotel.backstory = settings.get('backstory') or hotel.backstory or ""
+    hotel.page_title = settings.get('page_title') or f"Welcome to {hotel.name}"
+    hotel.theme_color = settings.get('theme_color') or "#ffc107"
+    hotel.what_makes_special = settings.get('what_makes_special') or ''
+    hotel.backstory = settings.get('backstory') or ''
 
     # Google Reviews & Ratings
     google_reviews = (
@@ -143,24 +141,26 @@ def sync_pms_property_to_booking_engine(prop_or_dict):
         hotel.enable_google_reviews = bool(settings.get('enable_google_reviews'))
     elif pms_p.get('enable_google_reviews') is not None:
         hotel.enable_google_reviews = bool(pms_p.get('enable_google_reviews'))
+    else:
+        hotel.enable_google_reviews = False
 
     g_rating = settings.get('google_rating') or pms_p.get('google_rating')
     if g_rating is not None and str(g_rating).strip() != "":
         try:
             hotel.google_rating = Decimal(str(g_rating))
         except Exception:
-            hotel.google_rating = hotel.google_rating or Decimal('4.5')
+            hotel.google_rating = Decimal('0.0')
     else:
-        hotel.google_rating = hotel.google_rating or Decimal('4.5')
+        hotel.google_rating = Decimal('0.0')
 
     g_count = settings.get('google_review_count') or pms_p.get('total_reviews')
     if g_count is not None and str(g_count).strip() != "":
         try:
             hotel.total_reviews = int(g_count)
         except Exception:
-            hotel.total_reviews = hotel.total_reviews or 0
+            hotel.total_reviews = 0
     else:
-        hotel.total_reviews = hotel.total_reviews or 0
+        hotel.total_reviews = 0
 
     hotel.booking_engine_settings = settings
     hotel.save()

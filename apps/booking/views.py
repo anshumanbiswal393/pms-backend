@@ -86,33 +86,24 @@ def fetch_pms_property_by_slug(slug_lower):
         from apps.core.tenants.models import Property as PmsProperty
         slug_lower = str(slug_lower).strip().lower()
         target_clean = re.sub(r'[^a-z0-9]', '', slug_lower)
+        if not target_clean:
+            return None
 
-        # 1. Exact match pass
+        # Exact match pass on slug, name slug, id, or hotel_id
         for prop in PmsProperty.objects.all():
             prop_settings = prop.booking_engine_settings or {}
-            p_slug = str(prop_settings.get('slug') or prop.name.lower().replace(' ', '-')).strip().lower()
+            p_slug = str(prop_settings.get('slug') or getattr(prop, 'slug', '') or prop.name.lower().replace(' ', '-')).strip().lower()
             p_name = str(prop.name).strip().lower()
             pslug_clean = re.sub(r'[^a-z0-9]', '', p_slug)
             pname_clean = re.sub(r'[^a-z0-9]', '', p_name)
 
             if slug_lower == p_slug or slug_lower == p_name:
                 return prop
-            if target_clean and (target_clean == pslug_clean or target_clean == pname_clean):
+            if target_clean == pslug_clean or target_clean == pname_clean:
                 return prop
             if str(prop.id).lower() == slug_lower or getattr(prop, 'hotel_id', '').lower() == slug_lower:
                 return prop
 
-        # 2. Substring match pass
-        if len(target_clean) >= 3:
-            for prop in PmsProperty.objects.all():
-                prop_settings = prop.booking_engine_settings or {}
-                p_slug = str(prop_settings.get('slug') or prop.name.lower().replace(' ', '-')).strip().lower()
-                p_name = str(prop.name).strip().lower()
-                pslug_clean = re.sub(r'[^a-z0-9]', '', p_slug)
-                pname_clean = re.sub(r'[^a-z0-9]', '', p_name)
-
-                if (target_clean in pslug_clean or pslug_clean in target_clean or target_clean in pname_clean or pname_clean in target_clean):
-                    return prop
     except Exception as e:
         print(f"Notice: Native PMS property fetch error: {e}")
 
@@ -126,7 +117,7 @@ def sync_hotel_from_pms(hotel, pms_p):
 def get_or_create_hotel_tenant(slug):
     slug_lower = str(slug or '').lower().strip()
     if not slug_lower:
-        slug_lower = 'demo-retrod'
+        slug_lower = 'retrod'
 
     # 1. Try fetching real property details from PMS
     prop = fetch_pms_property_by_slug(slug_lower)
@@ -136,15 +127,17 @@ def get_or_create_hotel_tenant(slug):
     # 2. Check if Hotel exists in apps.booking DB
     hotel = Hotel.objects.filter(slug__iexact=slug_lower).first()
     if not hotel:
-        for h in Hotel.objects.all():
-            if re.sub(r'[^a-z0-9]', '', h.slug) == re.sub(r'[^a-z0-9]', '', slug_lower):
-                hotel = h
-                break
+        target_clean = re.sub(r'[^a-z0-9]', '', slug_lower)
+        if target_clean:
+            for h in Hotel.objects.all():
+                if re.sub(r'[^a-z0-9]', '', h.slug) == target_clean:
+                    hotel = h
+                    break
     if hotel:
         return hotel
 
-    # 3. If generic root query ('demo-retrod', 'retrod', '') and no specific hotel found, load first PMS property
-    if slug_lower in ['demo-retrod', 'retrod', 'hotel', '']:
+    # 3. If generic root query ('demo-retrod', 'retrod', 'demo', '') and no specific hotel found, load first PMS property
+    if slug_lower in ['demo-retrod', 'retrod', 'demo', '']:
         from apps.core.tenants.models import Property as PmsProperty
         first_p = PmsProperty.objects.first()
         if first_p:
