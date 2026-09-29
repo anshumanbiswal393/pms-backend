@@ -14,7 +14,22 @@ class B2BPartnerViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
             return B2BPartner.objects.none()
-        return B2BPartner.objects.filter(tenant=tenant)
+        qs = B2BPartner.objects.filter(tenant=tenant)
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(name__icontains=search) |
+                Q(agent_id__icontains=search) |
+                Q(contact_person__icontains=search) |
+                Q(email__icontains=search) |
+                Q(phone__icontains=search) |
+                Q(location__icontains=search)
+            )
+        status_val = self.request.query_params.get('status')
+        if status_val and status_val != 'All':
+            qs = qs.filter(status__iexact=status_val)
+        return qs.order_by('-created_at')
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, 'tenant', None)

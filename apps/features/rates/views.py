@@ -5,6 +5,8 @@ from django.utils.dateparse import parse_date
 from django.db.models import Q
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from datetime import datetime, date, timedelta
+from apps.core.common.mixins import RedisCacheMixin
+
 
 from apps.features.rates.models import (
     MealPlan, CancellationPolicy, ChildPolicy, RatePlan,
@@ -72,7 +74,8 @@ class ChildPolicyViewSet(viewsets.ModelViewSet):
         return ChildPolicy.objects.filter(tenant=tenant)
 
 
-class RatePlanViewSet(viewsets.ModelViewSet):
+class RatePlanViewSet(RedisCacheMixin, viewsets.ModelViewSet):
+    cache_timeout = 300  # 5 minutes
     serializer_class = RatePlanSerializer
     
     def get_permissions(self):
@@ -362,7 +365,8 @@ class RateCalendarViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
 
-class HospitalityPackageViewSet(viewsets.ModelViewSet):
+class HospitalityPackageViewSet(RedisCacheMixin, viewsets.ModelViewSet):
+    cache_timeout = 300
     serializer_class = HospitalityPackageSerializer
     permission_classes = [IsPackageManager]
     filterset_fields = ['status']
@@ -374,7 +378,8 @@ class HospitalityPackageViewSet(viewsets.ModelViewSet):
             return HospitalityPackage.objects.none()
         return HospitalityPackage.objects.filter(tenant=tenant)
 
-class ServiceCategoryViewSet(viewsets.ModelViewSet):
+class ServiceCategoryViewSet(RedisCacheMixin, viewsets.ModelViewSet):
+    cache_timeout = 300
     serializer_class = ServiceCategorySerializer
     permission_classes = [IsPackageManager]
 
@@ -384,7 +389,8 @@ class ServiceCategoryViewSet(viewsets.ModelViewSet):
             return ServiceCategory.objects.none()
         return ServiceCategory.objects.filter(tenant=tenant)
 
-class ServiceViewSet(viewsets.ModelViewSet):
+class ServiceViewSet(RedisCacheMixin, viewsets.ModelViewSet):
+    cache_timeout = 300
     serializer_class = ServiceSerializer
     permission_classes = [IsPackageManager]
     filterset_fields = ['category', 'status']

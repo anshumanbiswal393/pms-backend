@@ -1,9 +1,13 @@
 import uuid
+import random
+import logging
 from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.forms.models import model_to_dict
+
+logger = logging.getLogger(__name__)
 from apps.features.reservations.models import (
     CorporateAccount, GroupBlock, Reservation, ReservationInventory,
     ReservationRateSnapshot, ReservationGuest, ReservationEvent,
@@ -173,65 +177,125 @@ class BookingEngine:
             ]
         }
         """
-        # Resolve Primary Guest (either lookup by UUID or create inline)
+        # Resolve Primary Guest (either lookup by UUID, lookup by contact/email/phone, or create inline)
+        primary_guest = None
         if booking_data.get('primary_guest_id'):
-            primary_guest = GuestProfile.objects.get(id=booking_data['primary_guest_id'], tenant=tenant)
+            try:
+                primary_guest = GuestProfile.objects.get(id=booking_data['primary_guest_id'], tenant=tenant)
+            except GuestProfile.DoesNotExist:
+                primary_guest = None
+
+        phone = (booking_data.get('phone') or booking_data.get('event_organizer_contact') or '').strip()
+        email = (booking_data.get('email') or booking_data.get('event_organizer_email') or '').strip()
+        address = (booking_data.get('address') or booking_data.get('event_organizer_billing_address') or '').strip()
+        id_type = booking_data.get('idType') or "PASSPORT"
+        id_number = (booking_data.get('idNumber') or '').strip()
+        id_proof_url = booking_data.get('id_proof_url') or booking_data.get('idProofUrl') or ""
+
+        if not primary_guest and (email or phone):
+            contact = None
+            if email and phone and phone not in ['+91-', '+91', '0000000000']:
+                contact = GuestContact.objects.filter(tenant=tenant, email=email, phone=phone).first()
+            if not contact and phone and phone not in ['+91-', '+91', '0000000000']:
+                contact = GuestContact.objects.filter(tenant=tenant, phone=phone).first()
+            if not contact and email and email != 'guest@example.com':
+                contact = GuestContact.objects.filter(tenant=tenant, email=email).first()
+            if contact:
+                primary_guest = contact.guest
+
+        if primary_guest:
+            if phone or email or address:
+                contact = primary_guest.contacts.filter(is_primary=True).first() or primary_guest.contacts.first()
+                if contact:
+                    if phone and phone not in ['+91-', '+91', '0000000000'] and contact.phone != phone:
+                        if not GuestContact.objects.filter(tenant=tenant, email=contact.email, phone=phone).exclude(id=contact.id).exists():
+                            contact.phone = phone
+                    if email and email != 'guest@example.com' and contact.email != email:
+                        if not GuestContact.objects.filter(tenant=tenant, email=email, phone=contact.phone).exclude(id=contact.id).exists():
+                            contact.email = email
+                    if address and address != 'Address':
+                        contact.address_line_1 = address
+                    try:
+                        contact.save()
+                    except Exception:
+                        pass
+                elif phone or email:
+                    clean_email = email or f"guest_{primary_guest.id.hex[:8]}@example.com"
+                    clean_phone = phone or '0000000000'
+                    if not GuestContact.objects.filter(tenant=tenant, email=clean_email, phone=clean_phone).exists():
+                        try:
+                            GuestContact.objects.create(
+                                tenant=tenant,
+                                guest=primary_guest,
+                                email=clean_email,
+                                phone=clean_phone,
+                                address_line_1=address or '',
+                                is_primary=True
+                            )
+                        except Exception:
+                            pass
+            if id_number or id_proof_url:
+                doc = primary_guest.documents.first()
+                if not doc:
+                    doc_type = 'PASSPORT'
+                    id_type_upper = id_type.upper()
+                    if any(kw in id_type_upper for kw in ['ID', 'CARD', 'AADHAAR', 'NATIONAL', 'VOTER', 'PAN']):
+                        doc_type = 'NATIONAL_ID'
+                    elif any(kw in id_type_upper for kw in ['LICENSE', 'LICENCE', 'DRIVING']):
+                        doc_type = 'DRIVING_LICENCE'
+                    encrypted_doc_num = EncryptionHelper.encrypt(id_number) if id_number else ""
+                    try:
+                        GuestDocument.objects.create(
+                            tenant=tenant,
+                            guest=primary_guest,
+                            document_type=doc_type,
+                            document_number=encrypted_doc_num,
+                            attachment_url=id_proof_url,
+                            is_verified=False
+                        )
+                    except Exception:
+                        pass
         else:
             full_name = booking_data.get('fullName') or booking_data.get('event_organizer_name') or "Inline Guest"
-            email = booking_data.get('email') or booking_data.get('event_organizer_email') or ""
-            phone = booking_data.get('phone') or booking_data.get('event_organizer_contact') or ""
-            address = booking_data.get('address') or booking_data.get('event_organizer_billing_address') or ""
             nationality = booking_data.get('nationality') or ""
-            id_type = booking_data.get('idType') or "PASSPORT"
-            id_number = booking_data.get('idNumber') or ""
 
             parts = full_name.strip().split(' ', 1)
             first_name = parts[0]
             last_name = parts[1] if len(parts) > 1 else "Guest"
 
-            contact = None
-            if email or phone:
-                contact = GuestContact.objects.filter(tenant=tenant, email=email, phone=phone).first()
-                if not contact and email:
-                    contact = GuestContact.objects.filter(tenant=tenant, email=email).first()
-                if not contact and phone:
-                    contact = GuestContact.objects.filter(tenant=tenant, phone=phone).first()
-
-            if contact:
-                primary_guest = contact.guest
-                if email and contact.email != email:
-                    contact.email = email
-                if phone and contact.phone != phone:
-                    contact.phone = phone
-                if address:
-                    contact.address_line_1 = address
-                contact.save()
-            else:
-                primary_guest = GuestProfile.objects.create(
-                    tenant=tenant,
-                    first_name=first_name,
-                    last_name=last_name,
-                    nationality=nationality,
-                    guest_type='DOMESTIC'
-                )
+            primary_guest = GuestProfile.objects.create(
+                tenant=tenant,
+                first_name=first_name,
+                last_name=last_name,
+                nationality=nationality,
+                guest_type='DOMESTIC'
+            )
+            clean_email = email or f"guest_{primary_guest.id.hex[:8]}@example.com"
+            clean_phone = phone or '0000000000'
+            if GuestContact.objects.filter(tenant=tenant, email=clean_email, phone=clean_phone).exists():
+                clean_email = f"guest_{primary_guest.id.hex[:8]}@example.com"
+            try:
                 GuestContact.objects.create(
                     tenant=tenant,
                     guest=primary_guest,
-                    email=email,
-                    phone=phone,
+                    email=clean_email,
+                    phone=clean_phone,
                     address_line_1=address,
                     is_primary=True
                 )
-                id_proof_url = booking_data.get('id_proof_url') or booking_data.get('idProofUrl') or ""
-                if id_number or id_proof_url:
-                    doc_type = 'PASSPORT'
-                    id_type_upper = id_type.upper()
-                    if 'ID' in id_type_upper or 'CARD' in id_type_upper or 'AADHAAR' in id_type_upper or 'NATIONAL' in id_type_upper or 'VOTER' in id_type_upper or 'PAN' in id_type_upper:
-                        doc_type = 'NATIONAL_ID'
-                    elif 'LICENSE' in id_type_upper or 'LICENCE' in id_type_upper or 'DRIVING' in id_type_upper:
-                        doc_type = 'DRIVING_LICENCE'
+            except Exception as ex:
+                logger.warning(f"Could not create contact for guest {primary_guest.id}: {ex}")
 
-                    encrypted_doc_num = EncryptionHelper.encrypt(id_number) if id_number else ""
+            if id_number or id_proof_url:
+                doc_type = 'PASSPORT'
+                id_type_upper = id_type.upper()
+                if any(kw in id_type_upper for kw in ['ID', 'CARD', 'AADHAAR', 'NATIONAL', 'VOTER', 'PAN']):
+                    doc_type = 'NATIONAL_ID'
+                elif any(kw in id_type_upper for kw in ['LICENSE', 'LICENCE', 'DRIVING']):
+                    doc_type = 'DRIVING_LICENCE'
+
+                encrypted_doc_num = EncryptionHelper.encrypt(id_number) if id_number else ""
+                try:
                     GuestDocument.objects.create(
                         tenant=tenant,
                         guest=primary_guest,
@@ -240,6 +304,8 @@ class BookingEngine:
                         attachment_url=id_proof_url,
                         is_verified=False
                     )
+                except Exception:
+                    pass
         
         # Resolve Reservation Source
         res_source_id = booking_data.get('reservation_source_id')
@@ -412,8 +478,10 @@ class BookingEngine:
                 guest=primary_guest,
                 is_primary=True,
                 guest_snapshot={
+                    'name': f"{primary_guest.first_name or ''} {primary_guest.last_name or ''}".strip(),
                     'first_name': primary_guest.first_name,
                     'last_name': primary_guest.last_name,
+                    'type': 'Primary',
                     'email': primary_contact.email if primary_contact else None,
                     'phone': primary_contact.phone if primary_contact else None,
                     'address': f"{primary_contact.address_line_1 or ''} {primary_contact.city or ''} {primary_contact.state or ''}".strip() if primary_contact else None,
@@ -422,6 +490,83 @@ class BookingEngine:
                     'id_proof_url': primary_doc.attachment_url if primary_doc else None,
                 }
             )
+
+            # Persist additional / accompanying guests for this allocation
+            add_guests = booking_data.get('additional_guests') or booking_data.get('additionalGuests') or []
+            for g_item in add_guests:
+                if not isinstance(g_item, dict):
+                    continue
+                g_name = (g_item.get('name') or g_item.get('fullName') or '').strip()
+                if not g_name:
+                    continue
+                g_type = g_item.get('type') or g_item.get('guest_type') or 'Adult'
+                g_age = str(g_item.get('age') or '')
+                g_gender = g_item.get('gender') or ''
+                g_id_type = g_item.get('idType') or g_item.get('id_type') or 'NATIONAL_ID'
+                g_id_number = (g_item.get('idNumber') or g_item.get('id_number') or '').strip()
+                g_id_url = g_item.get('idProofUrl') or g_item.get('id_proof_url') or ''
+                g_phone = (g_item.get('phone') or '').strip()
+                g_email = (g_item.get('email') or '').strip()
+
+                parts = g_name.split(' ', 1)
+                g_first = parts[0]
+                g_last = parts[1] if len(parts) > 1 else 'Guest'
+
+                sec_guest = None
+                try:
+                    sec_guest = GuestProfile.objects.create(
+                        tenant=tenant,
+                        first_name=g_first,
+                        last_name=g_last,
+                        guest_type='DOMESTIC'
+                    )
+                    if g_phone or g_email:
+                        sec_email = g_email or f"sec_{sec_guest.id.hex[:8]}@example.com"
+                        sec_phone = g_phone or '0000000000'
+                        if not GuestContact.objects.filter(tenant=tenant, email=sec_email, phone=sec_phone).exists():
+                            try:
+                                GuestContact.objects.create(
+                                    tenant=tenant,
+                                    guest=sec_guest,
+                                    phone=sec_phone,
+                                    email=sec_email,
+                                    is_primary=True
+                                )
+                            except Exception:
+                                pass
+                    if g_id_number:
+                        enc_doc = EncryptionHelper.encrypt(g_id_number)
+                        doc_t = 'PASSPORT' if 'PASSPORT' in g_id_type.upper() else 'DRIVING_LICENCE' if any(k in g_id_type.upper() for k in ['DRIV', 'LICEN']) else 'NATIONAL_ID'
+                        GuestDocument.objects.create(
+                            tenant=tenant,
+                            guest=sec_guest,
+                            document_type=doc_t,
+                            document_number=enc_doc,
+                            attachment_url=g_id_url,
+                            is_verified=False
+                        )
+                except Exception as ex:
+                    logger.warning(f"Failed to create secondary guest profile: {ex}")
+
+                ReservationGuest.objects.create(
+                    tenant=tenant,
+                    reservation_inventory=allocation,
+                    guest=sec_guest,
+                    is_primary=False,
+                    guest_snapshot={
+                        'name': g_name,
+                        'first_name': g_first,
+                        'last_name': g_last,
+                        'type': g_type,
+                        'age': g_age,
+                        'gender': g_gender,
+                        'phone': g_phone,
+                        'email': g_email,
+                        'id_type': g_id_type,
+                        'id_number': g_id_number,
+                        'id_proof_url': g_id_url,
+                    }
+                )
 
             # Create daily rate snapshots
             rate_plan = RatePlan.objects.get(id=alloc_item['rate_plan_id'], tenant=tenant)
@@ -563,6 +708,9 @@ class BookingEngine:
                 ec_amt = Decimal(str(ec.get('amount') or 0))
                 if ec_amt > Decimal('0.00'):
                     ec_desc = ec.get('description') or 'Extra Charge'
+                    # Prevent duplicate creation if room extra charges were already recorded per allocation
+                    if ec_desc.startswith("Extra Guest Charge (") and any((a.get('extra_charge') or a.get('extraCharge')) for a in booking_data.get('allocations', [])):
+                        continue
                     ec_tax_type = ec.get('taxType') or ec.get('tax_type') or 'Excluded'
                     ec_tax_percent = Decimal(str(ec.get('taxPercent') or ec.get('tax_percent') or 0))
                     ec_date = ec.get('date') or reservation.arrival_date
@@ -711,6 +859,15 @@ class RoomAssignmentEngine:
                 raise ValidationError("Room type upgrade reason is required.")
 
         allocation.inventory_unit = room
+        if room.inventory_unit_type:
+            allocation.inventory_unit_type = room.inventory_unit_type
+            allocation.inventory_snapshot = {
+                'id': str(room.inventory_unit_type.id),
+                'code': room.inventory_unit_type.code,
+                'name': room.inventory_unit_type.name,
+                'base_occupancy': room.inventory_unit_type.base_occupancy,
+                'max_occupancy': room.inventory_unit_type.max_occupancy,
+            }
         allocation.assigned_at = timezone.now()
         allocation.assigned_by = user
         allocation.status = 'ASSIGNED'
@@ -803,6 +960,13 @@ class RoomAssignmentEngine:
         allocation.inventory_unit = new_room
         if new_room.inventory_unit_type:
             allocation.inventory_unit_type = new_room.inventory_unit_type
+            allocation.inventory_snapshot = {
+                'id': str(new_room.inventory_unit_type.id),
+                'code': new_room.inventory_unit_type.code,
+                'name': new_room.inventory_unit_type.name,
+                'base_occupancy': new_room.inventory_unit_type.base_occupancy,
+                'max_occupancy': new_room.inventory_unit_type.max_occupancy,
+            }
         if new_check_in_date:
             allocation.check_in_date = new_check_in_date
         if new_check_out_date:
@@ -852,7 +1016,9 @@ class CheckInCheckOutEngine:
 
         # Check-in date validation: guest cannot check in before scheduled arrival date
         current_date = timezone.localdate()
-        if reservation.arrival_date and reservation.arrival_date > current_date:
+        prop_bdate = reservation.property.business_date if (reservation.property and reservation.property.business_date) else None
+        effective_date = max(current_date, prop_bdate) if prop_bdate else current_date
+        if reservation.arrival_date and reservation.arrival_date > effective_date:
             raise ValidationError(
                 f"Guest cannot check in before the scheduled arrival date ({reservation.arrival_date.strftime('%d-%b-%Y')})."
             )
@@ -979,14 +1145,15 @@ class CheckInCheckOutEngine:
         if reservation.status != 'CHECKED_IN':
             raise ValidationError("Reservation must be checked in to undo check-in.")
 
-        # Same-day validation: only allow undo check-in on the same operational business date
-        current_bdate = reservation.property.business_date if (reservation.property and reservation.property.business_date) else timezone.localdate()
+        # Same-day validation: only allow undo check-in on the same operational date (business date or local date)
+        today_local = timezone.localdate()
+        current_bdate = reservation.property.business_date if (reservation.property and reservation.property.business_date) else today_local
         checkin_event = reservation.timeline_events.filter(event_type='CHECKED_IN').order_by('-created_at').first()
-        checkin_date = checkin_event.created_at.date() if checkin_event else reservation.arrival_date
+        checkin_date = checkin_event.created_at.date() if checkin_event else (reservation.arrival_date or today_local)
 
-        if current_bdate > checkin_date:
+        if checkin_date < today_local and checkin_date < current_bdate:
             raise ValidationError(
-                f"Cannot undo check-in. Check-in was completed on {checkin_date}, which is prior to current business date {current_bdate}. Undo check-in is only permitted on the same operational date."
+                f"Cannot undo check-in. Check-in was completed on {checkin_date}, which is prior to current date. Undo check-in is only permitted on the same operational date."
             )
 
         reservation.status = 'CONFIRMED'
@@ -1017,14 +1184,15 @@ class CheckInCheckOutEngine:
         if reservation.status != 'CHECKED_OUT':
             raise ValidationError("Reservation must be checked out to undo check-out.")
 
-        # Same-day validation: only allow undo check-out on the same operational business date
-        current_bdate = reservation.property.business_date if (reservation.property and reservation.property.business_date) else timezone.localdate()
+        # Same-day validation: only allow undo check-out on the same operational date (business date or local date)
+        today_local = timezone.localdate()
+        current_bdate = reservation.property.business_date if (reservation.property and reservation.property.business_date) else today_local
         checkout_event = reservation.timeline_events.filter(event_type='CHECKED_OUT').order_by('-created_at').first()
-        checkout_date = checkout_event.created_at.date() if checkout_event else reservation.departure_date
+        checkout_date = checkout_event.created_at.date() if checkout_event else (reservation.departure_date or today_local)
 
-        if current_bdate > checkout_date:
+        if checkout_date < today_local and checkout_date < current_bdate:
             raise ValidationError(
-                f"Cannot undo check-out. Check-out was completed on {checkout_date}, which is prior to current business date {current_bdate}. Undo check-out is only permitted on the same operational date."
+                f"Cannot undo check-out. Check-out was completed on {checkout_date}, which is prior to current date. Undo check-out is only permitted on the same operational date."
             )
 
         reservation.status = 'CHECKED_IN'
@@ -1131,6 +1299,262 @@ class ReservationModificationEngine:
                 }
             })
         )
+        return reservation
+
+    @staticmethod
+    @transaction.atomic
+    def amend_stay(tenant, reservation_id, new_departure_date, new_arrival_date=None, user=None):
+        """
+        Amends/extends reservation stay dates.
+        Recalculates nightly rates, extra guest charges, and per-night taxes (GST).
+        Generates or removes ReservationRateSnapshot records for newly added or removed dates.
+        Updates reservation.departure_date, room_allocations check_out_date, total_amount, tax_amount, balance_amount.
+        Updates or creates GuestFolio and posts FolioTransaction records for the amended nights.
+        """
+        from datetime import datetime, timedelta
+        from decimal import Decimal
+        from apps.features.reservations.models import Reservation, ReservationRateSnapshot, ReservationExtraCharge, ReservationEvent
+        from apps.features.front_office.models import GuestFolio, FolioTransaction
+
+        reservation = Reservation.objects.get(id=reservation_id, tenant=tenant)
+        old_dep = reservation.departure_date
+        old_arr = reservation.arrival_date
+
+        if isinstance(new_departure_date, str):
+            new_dep = datetime.strptime(new_departure_date.split('T')[0], '%Y-%m-%d').date()
+        else:
+            new_dep = new_departure_date
+
+        if new_arrival_date:
+            if isinstance(new_arrival_date, str):
+                new_arr = datetime.strptime(new_arrival_date.split('T')[0], '%Y-%m-%d').date()
+            else:
+                new_arr = new_arrival_date
+        else:
+            new_arr = old_arr
+
+        if new_dep <= new_arr:
+            raise ValidationError("New departure date must be strictly after the arrival date.")
+
+        allocations = list(reservation.room_allocations.all())
+
+        # Check room availability if extending stay and room is assigned
+        for alloc in allocations:
+            if alloc.inventory_unit and new_dep > alloc.check_out_date:
+                check_room_availability(
+                    tenant=tenant,
+                    room=alloc.inventory_unit,
+                    check_in_date=alloc.check_out_date,
+                    check_out_date=new_dep,
+                    exclude_allocation_id=alloc.id
+                )
+
+        # Update allocations check-in & check-out dates
+        for alloc in allocations:
+            alloc.check_in_date = new_arr
+            alloc.check_out_date = new_dep
+            alloc.save(update_fields=['check_in_date', 'check_out_date'])
+
+        # Find or create GuestFolio for this reservation
+        folio = GuestFolio.objects.filter(reservation=reservation, tenant=tenant).first()
+        if not folio:
+            try:
+                conf_prefix = str(reservation.confirmation_number or reservation.id)[:8]
+                folio_num = f"FOL-{conf_prefix}"
+                folio = GuestFolio.objects.create(
+                    tenant=tenant,
+                    reservation=reservation,
+                    folio_number=folio_num,
+                    status='OPEN',
+                    total_charges=Decimal('0.00'),
+                    total_payments=Decimal(str(reservation.paid_amount or '0.00')),
+                    balance=Decimal('0.00')
+                )
+            except Exception:
+                folio = None
+
+        newly_added_charges = []
+
+        # Process each allocation's snapshots
+        for alloc in allocations:
+            unit_type = alloc.inventory_unit_type
+            guest_cnt = (alloc.adult_count or 1) + (alloc.child_count or 0)
+            existing_snaps = {s.date: s for s in alloc.rate_snapshots.all()}
+
+            # If shortening stay: delete snapshots falling outside the new range
+            for s_date, snap in list(existing_snaps.items()):
+                if s_date < new_arr or s_date >= new_dep:
+                    snap.delete()
+                    del existing_snaps[s_date]
+
+            # Also cleanup any ReservationExtraCharge records outside new date range
+            ReservationExtraCharge.objects.filter(
+                reservation=reservation,
+                date__lt=new_arr
+            ).delete()
+            ReservationExtraCharge.objects.filter(
+                reservation=reservation,
+                date__gte=new_dep
+            ).delete()
+
+            # Resolve template rate plan and nightly base rate from existing snapshots
+            ref_snap = alloc.rate_snapshots.first()
+            if ref_snap:
+                rate_plan = ref_snap.rate_plan
+                rate_version = ref_snap.rate_plan_version
+                nightly_rate = ref_snap.amount_charged
+                policy_snapshot = ref_snap.policy_snapshot
+                rate_snapshot_tmpl = dict(ref_snap.rate_snapshot or {})
+            else:
+                from apps.features.rates.models import RatePlan, RatePlanInventory
+                rate_plan = RatePlan.objects.filter(tenant=tenant).first()
+                rate_version = rate_plan.versions.first() if rate_plan else None
+                # lookup base rate from inventory
+                rpi = RatePlanInventory.objects.filter(tenant=tenant, inventory_unit_type=unit_type).first()
+                nightly_rate = Decimal(str(rpi.base_rate if rpi and rpi.base_rate else (unit_type.base_price or '2000.00')))
+                policy_snapshot = {}
+                rate_snapshot_tmpl = {
+                    'rate_plan_code': rate_plan.code if rate_plan else 'BAR',
+                    'rate_plan_name': rate_plan.name if rate_plan else 'Best Available Rate',
+                    'amount': str(nightly_rate),
+                }
+
+            # Iterate every night of the stay
+            curr_d = new_arr
+            while curr_d < new_dep:
+                if curr_d not in existing_snaps:
+                    # Create missing snapshot for newly added date
+                    snap_data = dict(rate_snapshot_tmpl)
+                    snap_data['amount'] = str(nightly_rate)
+
+                    new_snap = ReservationRateSnapshot.objects.create(
+                        tenant=tenant,
+                        reservation_inventory=alloc,
+                        date=curr_d,
+                        rate_plan=rate_plan,
+                        rate_plan_version=rate_version,
+                        amount_charged=nightly_rate,
+                        rate_snapshot=snap_data,
+                        policy_snapshot=policy_snapshot
+                    )
+                    existing_snaps[curr_d] = new_snap
+
+                    # Compute nightly tax
+                    night_tax, tax_lbl = calculate_item_tax(
+                        tenant=tenant,
+                        item_price=nightly_rate,
+                        per_night_tariff=nightly_rate,
+                        guests_count=guest_cnt
+                    )
+
+                    newly_added_charges.append({
+                        'date': curr_d,
+                        'desc': f"Room Charge ({unit_type.name})",
+                        'amount': nightly_rate,
+                        'tax': night_tax,
+                        'tax_lbl': tax_lbl
+                    })
+
+                    # Post to GuestFolio if open
+                    if folio:
+                        try:
+                            FolioTransaction.objects.create(
+                                tenant=tenant,
+                                folio=folio,
+                                transaction_type='CHARGE',
+                                charge_code='ROOM_RATE',
+                                amount=nightly_rate,
+                                description=f"Room Charge ({unit_type.name}) - {curr_d.strftime('%d %b %Y')}"
+                            )
+                            if night_tax > Decimal('0.00'):
+                                FolioTransaction.objects.create(
+                                    tenant=tenant,
+                                    folio=folio,
+                                    transaction_type='CHARGE',
+                                    charge_code='TAX',
+                                    amount=night_tax,
+                                    description=f"{tax_lbl} - {curr_d.strftime('%d %b %Y')}"
+                                )
+                        except Exception:
+                            pass
+
+                curr_d += timedelta(days=1)
+
+        # Recalculate total_amount and tax_amount for the entire reservation
+        total_room_charges = Decimal('0.00')
+        total_room_tax = Decimal('0.00')
+        for alloc in allocations:
+            guest_cnt = (alloc.adult_count or 1) + (alloc.child_count or 0)
+            for snap in alloc.rate_snapshots.all():
+                total_room_charges += snap.amount_charged
+                t_amt, _ = calculate_item_tax(
+                    tenant=tenant,
+                    item_price=snap.amount_charged,
+                    per_night_tariff=snap.amount_charged,
+                    guests_count=guest_cnt
+                )
+                total_room_tax += t_amt
+
+        # Sum Extra Charges
+        extra_charges = ReservationExtraCharge.objects.filter(reservation=reservation)
+        total_extra_charges = sum((ec.amount for ec in extra_charges), Decimal('0.00'))
+        total_extra_tax = sum((ec.tax_amount for ec in extra_charges), Decimal('0.00'))
+
+        # Sum Packages & Services
+        total_pkg_charges = sum((p.price for p in reservation.packages.all()), Decimal('0.00'))
+        total_pkg_tax = Decimal('0.00')
+        for p in reservation.packages.all():
+            p_tax, _ = calculate_item_tax(tenant=tenant, item_price=p.price)
+            total_pkg_tax += p_tax
+
+        total_svc_charges = sum((s.price for s in reservation.services.all()), Decimal('0.00'))
+        total_svc_tax = Decimal('0.00')
+        for s in reservation.services.all():
+            s_tax, _ = calculate_item_tax(tenant=tenant, item_price=s.price)
+            total_svc_tax += s_tax
+
+        total_amount = total_room_charges + total_extra_charges + total_pkg_charges + total_svc_charges
+        total_tax = total_room_tax + total_extra_tax + total_pkg_tax + total_svc_tax
+        discount = reservation.discount_amount or Decimal('0.00')
+
+        reservation.departure_date = new_dep
+        reservation.arrival_date = new_arr
+        reservation.total_amount = total_amount
+        reservation.tax_amount = total_tax
+        net_payable = (total_amount + total_tax) - discount
+        paid_val = reservation.paid_amount or Decimal('0.00')
+        reservation.balance_amount = max(Decimal('0.00'), net_payable - paid_val)
+        reservation.save()
+
+        # Update GuestFolio balance
+        if folio:
+            try:
+                folio.total_charges = net_payable
+                folio.total_payments = paid_val
+                folio.balance = net_payable - paid_val
+                folio.save()
+            except Exception:
+                pass
+
+        # Create Timeline Event
+        diff_str = f"Stay amended from {old_dep} to {new_dep}. Total charges updated to ₹{net_payable:.2f} (New Balance: ₹{reservation.balance_amount:.2f})."
+        ReservationEvent.objects.create(
+            tenant=tenant,
+            reservation=reservation,
+            event_type='AMENDED',
+            description=diff_str,
+            actor_user=user,
+            payload_diff=make_serializable({
+                'previous_departure': str(old_dep),
+                'new_departure': str(new_dep),
+                'new_total_amount': str(total_amount),
+                'new_tax_amount': str(total_tax),
+                'new_net_payable': str(net_payable),
+                'new_balance': str(reservation.balance_amount),
+                'newly_added_charges': newly_added_charges
+            })
+        )
+
         return reservation
 
 
@@ -1387,6 +1811,7 @@ class PricingEngine:
                 unit_type = InventoryUnitType.objects.get(id=alloc.get('inventory_unit_type_id'), tenant=tenant)
                 unit_type_name = unit_type.name
             except Exception:
+                unit_type = None
                 unit_type_name = "Room"
                 
             alloc_total = Decimal('0.00')
@@ -1394,24 +1819,6 @@ class PricingEngine:
             for rate_day in alloc.get('nightly_rates', []):
                 amt = Decimal(str(rate_day.get('amount', 0)))
                 alloc_total += amt
-            
-            per_night_tariff = alloc_total / Decimal(str(night_count))
-            guest_cnt = alloc.get('adult_count', 2) + alloc.get('child_count', 0)
-            alloc_tax, tax_lbl = calculate_item_tax(
-                tenant=tenant,
-                item_price=alloc_total,
-                per_night_tariff=per_night_tariff,
-                guests_count=guest_cnt
-            )
-            if tax_lbl and tax_lbl not in matched_tax_labels:
-                matched_tax_labels.append(tax_lbl)
-
-            breakdown.append({
-                'label': f"Room Charges ({unit_type_name})",
-                'amount': float(alloc_total)
-            })
-            total_amount += alloc_total
-            tax_amount += alloc_tax
 
             # Extra Adult & Extra Child Calculation
             adult_count = int(alloc.get('adult_count', 2) or 2)
@@ -1424,7 +1831,7 @@ class PricingEngine:
             extra_adult_rate = Decimal('0.00')
             extra_child_rate = Decimal('0.00')
 
-            if rate_plan_id and hasattr(unit_type, 'id'):
+            if rate_plan_id and unit_type and hasattr(unit_type, 'id'):
                 try:
                     from apps.features.rates.models import RatePlanInventoryType
                     rpi = RatePlanInventoryType.objects.filter(
@@ -1438,9 +1845,83 @@ class PricingEngine:
                 except Exception:
                     pass
 
+            if extra_adult_rate == Decimal('0.00') and unit_type:
+                extra_adult_rate = Decimal(str(
+                    getattr(unit_type, 'extra_adult_charge', None) or 
+                    getattr(unit_type, 'extra_adult_price', None) or 
+                    getattr(unit_type, 'extra_bed_price', None) or 
+                    getattr(unit_type, 'extra_bed_charge', None) or 0
+                ))
+            if extra_child_rate == Decimal('0.00') and unit_type:
+                extra_child_rate = Decimal(str(
+                    getattr(unit_type, 'extra_child_charge', None) or 
+                    getattr(unit_type, 'extra_child_price', None) or 0
+                ))
+
             extra_adult_total = Decimal(str(extra_adults)) * extra_adult_rate * Decimal(str(night_count))
             extra_child_total = Decimal(str(extra_children)) * extra_child_rate * Decimal(str(night_count))
-            custom_extra_total = Decimal(str(alloc.get('extra_charge', 0) or 0)) * Decimal(str(night_count))
+            custom_extra_input = Decimal(str(alloc.get('extra_charge', 0) or 0)) * Decimal(str(night_count))
+
+            # If rate wasn't found in DB, but custom_extra_input was provided for extra adults
+            if extra_adult_total == Decimal('0.00') and extra_adults > 0 and custom_extra_input > Decimal('0.00'):
+                extra_adult_total = custom_extra_input
+                custom_extra_input = Decimal('0.00')
+
+            # Prevent double-counting: custom_extra_input from room card usually includes extra adult/child charges
+            remaining_custom_extra = max(Decimal('0.00'), custom_extra_input - (extra_adult_total + extra_child_total))
+
+            # Room discount handling
+            alloc_disc_pct = Decimal(str(alloc.get('discount_percent', 0) or 0))
+            alloc_disc_amt = Decimal('0.00')
+            if alloc_disc_pct > Decimal('0.00'):
+                alloc_disc_amt = (alloc_total * alloc_disc_pct) / Decimal('100.0')
+
+            # Combined taxable base for this room allocation
+            room_taxable_total = max(
+                Decimal('0.00'),
+                alloc_total - alloc_disc_amt + extra_adult_total + extra_child_total + remaining_custom_extra
+            )
+            per_night_tariff = room_taxable_total / Decimal(str(night_count))
+            guest_cnt = alloc.get('adult_count', 2) + alloc.get('child_count', 0)
+
+            # Check if allocation has custom tax percentage from room selection
+            alloc_tax_pct = alloc.get('tax_percent')
+            if alloc_tax_pct is not None and str(alloc_tax_pct).strip() != '' and str(alloc_tax_pct).strip().lower() != 'none':
+                try:
+                    pct = Decimal(str(alloc_tax_pct))
+                    alloc_tax = (room_taxable_total * pct) / Decimal('100.0')
+                    tax_lbl = f"GST {pct:.0f}%" if pct == pct.to_integral() else f"GST {pct}%"
+                except Exception:
+                    alloc_tax, tax_lbl = calculate_item_tax(
+                        tenant=tenant,
+                        item_price=room_taxable_total,
+                        per_night_tariff=per_night_tariff,
+                        guests_count=guest_cnt
+                    )
+            else:
+                alloc_tax, tax_lbl = calculate_item_tax(
+                    tenant=tenant,
+                    item_price=room_taxable_total,
+                    per_night_tariff=per_night_tariff,
+                    guests_count=guest_cnt
+                )
+
+            if tax_lbl and tax_lbl not in matched_tax_labels:
+                matched_tax_labels.append(tax_lbl)
+
+            breakdown.append({
+                'label': f"Room Charges ({unit_type_name})",
+                'amount': float(alloc_total)
+            })
+            total_amount += alloc_total
+            tax_amount += alloc_tax
+
+            if alloc_disc_amt > Decimal('0.00'):
+                breakdown.append({
+                    'label': "Room Discount",
+                    'amount': float(-alloc_disc_amt)
+                })
+                total_amount -= alloc_disc_amt
 
             if extra_adult_total > 0:
                 breakdown.append({
@@ -1456,12 +1937,12 @@ class PricingEngine:
                 })
                 total_amount += extra_child_total
 
-            if custom_extra_total > 0:
+            if remaining_custom_extra > 0:
                 breakdown.append({
                     'label': "Extra Guest Charges",
-                    'amount': float(custom_extra_total)
+                    'amount': float(remaining_custom_extra)
                 })
-                total_amount += custom_extra_total
+                total_amount += remaining_custom_extra
             
         # Add packages
         for pkg_id in data.get('packages', []):

@@ -39,6 +39,9 @@ jobs:
             cd /opt/retrod/retrod-one-backend &&
             docker compose build backend &&
             docker compose up -d backend &&
+            sleep 8 &&
+            docker compose ps &&
+            docker compose logs --tail=60 backend &&
             docker image prune -f
           "
 

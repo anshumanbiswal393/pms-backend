@@ -195,6 +195,17 @@ class BookingSourceViewSet(viewsets.ModelViewSet):
     serializer_class = BookingSourceSerializer
     queryset = BookingSource.objects.all()
     permission_classes = [permissions.IsAuthenticated]
+    search_fields = ['name', 'details']
+    ordering_fields = ['name', 'is_active']
+    ordering = ['name']
+
+    def get_queryset(self):
+        qs = BookingSource.objects.all()
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            from django.db.models import Q
+            qs = qs.filter(Q(name__icontains=search) | Q(details__icontains=search))
+        return qs.order_by('name')
 
     def perform_create(self, serializer):
         instance = serializer.save()
@@ -279,5 +290,11 @@ class MediaFileServeView(APIView):
             raise Http404("Media file not found")
         
         content_type, _ = mimetypes.guess_type(file_path)
-        return FileResponse(open(file_path, 'rb'), content_type=content_type or 'application/octet-stream')
+        response = FileResponse(open(file_path, 'rb'), content_type=content_type or 'application/octet-stream')
+        response['X-Frame-Options'] = 'ALLOWALL'
+        response['Access-Control-Allow-Origin'] = '*'
+        if content_type in ['application/pdf'] or (content_type and content_type.startswith('image/')):
+            response['Content-Disposition'] = f'inline; filename="{os.path.basename(file_path)}"'
+        return response
+
 

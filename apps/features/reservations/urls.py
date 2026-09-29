@@ -4,6 +4,9 @@ from apps.features.reservations.views import (
     CorporateAccountViewSet, GroupBlockViewSet, ReservationViewSet, WaitlistViewSet,
     ReservationEventViewSet
 )
+from apps.features.reservations.self_checkin_views import (
+    PublicSelfCheckInVerifyView, PublicSelfCheckInSubmitView
+)
 
 router = DefaultRouter()
 router.register(r'corporate-accounts', CorporateAccountViewSet, basename='corporateaccount')
@@ -13,5 +16,8 @@ router.register(r'waitlist', WaitlistViewSet, basename='waitlist')
 router.register(r'events', ReservationEventViewSet, basename='reservationevent')
 
 urlpatterns = [
+    path('self-checkin/verify/', PublicSelfCheckInVerifyView.as_view(), name='public_self_checkin_verify'),
+    path('self-checkin/submit/', PublicSelfCheckInSubmitView.as_view(), name='public_self_checkin_submit'),
     path('', include(router.urls)),
 ]
+

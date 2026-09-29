@@ -46,21 +46,21 @@ class GuestProfileSerializer(serializers.ModelSerializer):
         return full_name or "Unnamed Guest"
 
     def get_primary_email(self, obj):
-        primary_contact = obj.contacts.filter(is_primary=True).first()
+        primary_contact = obj.contacts.filter(is_primary=True).first() or obj.contacts.first()
         return primary_contact.email if primary_contact else ""
 
     def get_email(self, obj):
         return self.get_primary_email(obj)
 
     def get_primary_phone(self, obj):
-        primary_contact = obj.contacts.filter(is_primary=True).first()
+        primary_contact = obj.contacts.filter(is_primary=True).first() or obj.contacts.first()
         return primary_contact.phone if primary_contact else ""
 
     def get_phone(self, obj):
         return self.get_primary_phone(obj)
 
     def get_primary_address(self, obj):
-        primary_contact = obj.contacts.filter(is_primary=True).first()
+        primary_contact = obj.contacts.filter(is_primary=True).first() or obj.contacts.first()
         if primary_contact:
             parts = [primary_contact.address_line_1, primary_contact.address_line_2, primary_contact.city, primary_contact.state, primary_contact.country]
             return ", ".join([p for p in parts if p])
@@ -70,7 +70,7 @@ class GuestProfileSerializer(serializers.ModelSerializer):
         return self.get_primary_address(obj)
 
     def get_country(self, obj):
-        primary_contact = obj.contacts.filter(is_primary=True).first()
+        primary_contact = obj.contacts.filter(is_primary=True).first() or obj.contacts.first()
         if primary_contact and primary_contact.country:
             return primary_contact.country
         return obj.nationality or "India"
@@ -176,39 +176,48 @@ class GuestProfileSerializer(serializers.ModelSerializer):
                     if email is not None: contact.email = email
                     if phone is not None: contact.phone = phone
                     if address is not None: contact.address_line_1 = address
-                    contact.save()
+                    try:
+                        contact.save()
+                    except Exception:
+                        pass
                 else:
-                    GuestContact.objects.create(
-                        tenant=instance.tenant,
-                        guest=instance,
-                        email=email or "",
-                        phone=phone or "",
-                        address_line_1=address or "",
-                        is_primary=True
-                    )
+                    try:
+                        GuestContact.objects.create(
+                            tenant=instance.tenant,
+                            guest=instance,
+                            email=email or "",
+                            phone=phone or "",
+                            address_line_1=address or "",
+                            is_primary=True
+                        )
+                    except Exception:
+                        pass
             
             id_type = request.data.get('id_type')
             id_number = request.data.get('id_number')
             id_proof_url = request.data.get('id_proof_url')
             
             if id_type is not None or id_number is not None or id_proof_url is not None:
-                doc = instance.documents.first()
-                doc_type = 'PASSPORT'
+                doc_type = 'NATIONAL_ID'
                 if id_type:
-                    id_type_upper = id_type.upper()
-                    if 'ID' in id_type_upper or 'CARD' in id_type_upper or 'AADHAAR' in id_type_upper or 'NATIONAL' in id_type_upper or 'VOTER' in id_type_upper or 'PAN' in id_type_upper:
-                        doc_type = 'NATIONAL_ID'
-                    elif 'LICENSE' in id_type_upper or 'LICENCE' in id_type_upper or 'DRIVING' in id_type_upper:
-                        doc_type = 'DRIVING_LICENCE'
-                    elif 'PASSPORT' in id_type_upper:
+                    id_type_upper = str(id_type).upper()
+                    if 'PASS' in id_type_upper:
                         doc_type = 'PASSPORT'
+                    elif 'LICEN' in id_type_upper or 'DRIV' in id_type_upper:
+                        doc_type = 'DRIVING_LICENCE'
+                    else:
+                        doc_type = 'NATIONAL_ID'
                 
                 encrypted_doc_num = EncryptionHelper.encrypt(id_number) if id_number else ""
 
+                # Look for existing document of this type or any document for this guest
+                doc = instance.documents.filter(document_type=doc_type).first() or instance.documents.first()
                 if doc:
-                    if id_type is not None: doc.document_type = doc_type
-                    if id_number is not None: doc.document_number = encrypted_doc_num
-                    if id_proof_url is not None: doc.attachment_url = id_proof_url
+                    doc.document_type = doc_type
+                    if id_number is not None:
+                        doc.document_number = encrypted_doc_num
+                    if id_proof_url is not None:
+                        doc.attachment_url = id_proof_url
                     doc.save()
                 else:
                     GuestDocument.objects.create(

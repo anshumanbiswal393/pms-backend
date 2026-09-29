@@ -13,9 +13,10 @@ class InventoryUnitCategoryFilter(django_filters.FilterSet):
 
 class InventoryUnitTypeFilter(django_filters.FilterSet):
     property_id = django_filters.UUIDFilter(field_name='property_id')
+    property = django_filters.UUIDFilter(field_name='property_id')
     class Meta:
         model = InventoryUnitType
-        fields = ['property_id', 'category', 'is_sellable']
+        fields = ['property_id', 'property', 'category', 'is_sellable']
 
 class InventoryUnitFilter(django_filters.FilterSet):
     property_id = django_filters.UUIDFilter(field_name='property_id')

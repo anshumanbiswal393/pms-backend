@@ -390,19 +390,101 @@ class UnifiedMailService:
             </div>
             """
 
-        # 7. Generic Fallback Notification Email
+        # 7. Self Check-In Invitation Email
+        elif email_type_upper in ["SELF_CHECKIN", "SELF_CHECK_IN", "ONLINE_CHECKIN"]:
+            resv_id = data.get("reservation_id") or data.get("confirmation_number") or ""
+            arrival = data.get("arrival_date") or data.get("arrival_formatted") or ""
+            departure = data.get("departure_date") or data.get("departure_formatted") or ""
+            check_in_time = data.get("check_in_time") or "12:00 PM"
+            check_out_time = data.get("check_out_time") or "10:00 AM"
+            checkin_url = data.get("self_checkin_url") or data.get("action_url") or data.get("link") or ""
+
+            body_content = f"""
+            <div style="padding: 28px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b;">
+                <div style="background-color: #ecfdf5; border: 1px solid #a7f3d0; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; color: #065f46; font-weight: 600; font-size: 14px;">
+                    ✨ Online Self Check-In Ready for Your Upcoming Stay
+                </div>
+                
+                <h2 style="font-size: 20px; color: #0f172a; margin: 0 0 12px 0; font-weight: 700;">
+                    Online Self Check-in: {hotel_name}
+                </h2>
+                
+                <p style="font-size: 14px; color: #334155; line-height: 1.6; margin: 0 0 12px 0;">
+                    Hello <strong>{recipient_name or 'Valued Guest'}</strong>,
+                </p>
+                
+                <p style="font-size: 14px; color: #334155; line-height: 1.6; margin: 0 0 20px 0;">
+                    We look forward to welcoming you to <strong>{hotel_name}</strong>! To fast-track your arrival and enjoy a seamless, contactless check-in experience, please verify your details using our secure self check-in portal:
+                </p>
+
+                <table style="width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; margin: 20px 0; font-size: 13px;">
+                    {f'<tr style="background-color: #f8fafc; border-bottom: 1px solid #e2e8f0;"><td style="padding: 10px 14px; font-weight: 600; color: #475569; width: 35%;">Reservation #:</td><td style="padding: 10px 14px; font-weight: 700; color: #0f172a; font-family: monospace;">#{resv_id}</td></tr>' if resv_id else ''}
+                    <tr style="border-bottom: 1px solid #e2e8f0;">
+                        <td style="padding: 10px 14px; font-weight: 600; color: #475569;">Arrival:</td>
+                        <td style="padding: 10px 14px; font-weight: 700; color: #0f172a;">{arrival} (from {check_in_time})</td>
+                    </tr>
+                    {f'<tr style="background-color: #f8fafc;"><td style="padding: 10px 14px; font-weight: 600; color: #475569;">Departure:</td><td style="padding: 10px 14px; font-weight: 700; color: #0f172a;">{departure} (until {check_out_time})</td></tr>' if departure else ''}
+                </table>
+
+                <div style="text-align: center; margin: 30px 0 20px 0;">
+                    <a href="{checkin_url}" target="_blank" style="background-color: #0d5c46; color: #ffffff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 15px; display: inline-block; box-shadow: 0 4px 6px -1px rgba(13, 92, 70, 0.25);">
+                        🚀 Complete Self Check-In Now &rarr;
+                    </a>
+                </div>
+
+                <div style="text-align: center; margin-bottom: 24px;">
+                    <p style="font-size: 12px; color: #64748b; line-height: 1.5; margin: 0 0 6px 0;">
+                        Direct link:
+                    </p>
+                    <a href="{checkin_url}" target="_blank" style="font-size: 12px; color: #0d5c46; text-decoration: underline; word-break: break-all;">
+                        {checkin_url}
+                    </a>
+                </div>
+
+                <div style="background-color: #f1f5f9; border-left: 3px solid #0d5c46; padding: 12px 16px; border-radius: 0 6px 6px 0; margin-top: 20px; font-size: 12px; color: #475569; line-height: 1.5;">
+                    ℹ️ <strong>Arrival Date Policy:</strong> Guests can view booking details anytime, but digital check-in submission strictly opens on their arrival date.
+                </div>
+            </div>
+            """
+
+        # 8. Generic Fallback Notification Email
         else:
             title = data.get("title") or "Notice from " + hotel_name
-            message = data.get("message") or data.get("content") or "You have a new update."
-            body_content = f"""
-            <div style="padding: 28px; font-family: sans-serif; color: #1e293b;">
+            custom_body = data.get("body")
+            message = data.get("message") or data.get("content")
+            action_url = data.get("action_url") or data.get("self_checkin_url") or data.get("link")
+            action_text = data.get("action_text") or "View Details"
+
+            if custom_body:
+                inner_content = custom_body
+            else:
+                msg_text = message or "You have a new update."
+                button_html = ""
+                if action_url:
+                    button_html = f"""
+                    <div style="text-align: center; margin: 28px 0 20px 0;">
+                        <a href="{action_url}" target="_blank" style="background-color: #0d5c46; color: #ffffff; padding: 12px 28px; border-radius: 6px; text-decoration: none; font-weight: 700; font-size: 14px; display: inline-block;">
+                            {action_text} &rarr;
+                        </a>
+                    </div>
+                    <p style="font-size: 12px; color: #64748b; line-height: 1.5; word-break: break-all; margin: 12px 0;">
+                        Or open this link: <a href="{action_url}" target="_blank" style="color: #0d5c46;">{action_url}</a>
+                    </p>
+                    """
+                inner_content = f"""
                 <h2 style="font-size: 18px; color: #0f172a; margin-top: 0;">{title}</h2>
                 <p style="font-size: 14px; color: #334155; line-height: 1.6;">
                     Hello <strong>{recipient_name or 'User'}</strong>,
                 </p>
-                <p style="font-size: 14px; color: #334155; line-height: 1.6;">
-                    {message}
-                </p>
+                <div style="font-size: 14px; color: #334155; line-height: 1.6;">
+                    {msg_text}
+                </div>
+                {button_html}
+                """
+
+            body_content = f"""
+            <div style="padding: 28px; font-family: sans-serif; color: #1e293b;">
+                {inner_content}
             </div>
             """
 
@@ -480,6 +562,12 @@ class UnifiedMailService:
             elif email_type_upper in ["LOST_FOUND", "LOST_AND_FOUND"]:
                 item = data.get("item_name") or "Item"
                 subject = f"Lost & Found Notice: {item} - {hotel_name}"
+            elif email_type_upper in ["SELF_CHECKIN", "SELF_CHECK_IN", "ONLINE_CHECKIN"]:
+                resv_id = data.get("reservation_id") or data.get("confirmation_number") or ""
+                if resv_id:
+                    subject = f"Self Check-In Invitation for Reservation #{resv_id} - {hotel_name}"
+                else:
+                    subject = f"Online Self Check-in - {hotel_name}"
             else:
                 subject = data.get("title") or f"Notification from {hotel_name}"
 

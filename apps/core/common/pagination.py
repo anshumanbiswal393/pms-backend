@@ -11,3 +11,8 @@ class OptionalPageNumberPagination(PageNumberPagination):
         if 'page' not in request.query_params:
             return None
         return super().paginate_queryset(queryset, request, view)
+
+    def get_paginated_response(self, data):
+        response = super().get_paginated_response(data)
+        response.data['total_pages'] = self.page.paginator.num_pages
+        return response

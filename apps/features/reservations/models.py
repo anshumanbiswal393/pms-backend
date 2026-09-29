@@ -137,7 +137,19 @@ class Reservation(BaseModel):
         ]
 
     def __str__(self):
-        return f"{self.confirmation_number} - {self.primary_guest.first_name} {self.primary_guest.last_name}"
+        return f"{self.confirmation_number} - {self.primary_guest.first_name if self.primary_guest else ''} {self.primary_guest.last_name if self.primary_guest else ''}"
+
+    def get_gross_total(self):
+        from decimal import Decimal
+        extra_sum = Decimal('0.00')
+        try:
+            if hasattr(self, 'extra_charges'):
+                extra_sum = sum((ec.amount + ec.tax_amount for ec in self.extra_charges.all()), Decimal('0.00'))
+        except Exception:
+            extra_sum = Decimal('0.00')
+        net = (self.paid_amount or Decimal('0.00')) + (self.balance_amount or Decimal('0.00'))
+        base_calc = (self.total_amount or Decimal('0.00')) + (self.tax_amount or Decimal('0.00')) - (self.discount_amount or Decimal('0.00'))
+        return max(net, base_calc + extra_sum, base_calc)
 
     def save(self, *args, **kwargs):
         if not self.confirmation_number:

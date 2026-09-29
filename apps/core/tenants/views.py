@@ -1,4 +1,5 @@
 from rest_framework import viewsets, permissions, status
+from apps.core.common.mixins import RedisCacheMixin
 from apps.core.tenants.models import (
     Tenant, Property, TenantBranding, TenantDomain, 
     TenantConfiguration, TenantIsolationConfig
@@ -90,10 +91,12 @@ class SuperadminPropertyViewSet(viewsets.ModelViewSet):
 
 
 
-class PropertyViewSet(viewsets.ModelViewSet):
+class PropertyViewSet(RedisCacheMixin, viewsets.ModelViewSet):
     """
     CRUD endpoint for managing Properties under the resolved tenant context.
+    Cached in Redis for high-speed repeated retrieval.
     """
+    cache_timeout = 300  # 5 minutes
     serializer_class = PropertySerializer
     
     def get_queryset(self):

@@ -386,7 +386,15 @@ class CouponSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         tenant = getattr(request, 'tenant', None)
         code = data.get('code')
-        
+        discount_type = data.get('discount_type', getattr(self.instance, 'discount_type', 'PERCENTAGE'))
+        discount_value = data.get('discount_value', getattr(self.instance, 'discount_value', None))
+
+        if discount_value is not None:
+            if discount_value < 0:
+                raise serializers.ValidationError({"discount_value": "Discount value cannot be negative."})
+            if discount_type == 'PERCENTAGE' and discount_value > 100:
+                raise serializers.ValidationError({"discount_value": "Percentage discount cannot exceed 100."})
+
         if code and tenant:
             qs = Coupon.objects.filter(tenant=tenant, code=code.upper().strip())
             if self.instance:

@@ -13,6 +13,7 @@ class TenantResolutionMiddleware(MiddlewareMixin):
             '/admin/',
             '/api/schema/',
             '/api/auth/',
+            '/api/reservations/self-checkin/',
             '/favicon.ico',
         ]
         

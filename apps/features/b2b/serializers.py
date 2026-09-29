@@ -67,26 +67,58 @@ class B2BPartnerSerializer(serializers.ModelSerializer):
             digits = digits[2:]
         if len(digits) != 10:
             raise serializers.ValidationError("Phone number must be exactly 10 digits.")
-        return digits
-
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         
-        def get_doc_url(field_file, default_url):
+        request = self.context.get('request')
+
+        def get_doc_url(field_file):
             if not field_file:
                 return None
-            name = field_file.name
-            # If the database value is an absolute URL, return it directly
-            if name.startswith('http://') or name.startswith('https://') or name.startswith('//'):
-                return name
-            return default_url
+            
+            raw_url = ""
+            if hasattr(field_file, 'url'):
+                try:
+                    raw_url = field_file.url
+                except Exception:
+                    pass
+            if not raw_url:
+                name = str(field_file.name if hasattr(field_file, 'name') else field_file)
+                raw_url = name
+
+            if not raw_url or raw_url.strip().lower() in ['none', 'null', '']:
+                return None
+
+            # External cloud storage URL (S3, Cloudinary, etc.)
+            if raw_url.startswith('http://') or raw_url.startswith('https://') or raw_url.startswith('//'):
+                if 'retrod' not in raw_url and 'localhost' not in raw_url and '127.0.0.1' not in raw_url:
+                    return raw_url
+                from urllib.parse import urlparse
+                parsed = urlparse(raw_url)
+                raw_url = parsed.path
+
+            clean_path = raw_url.lstrip('/')
+            if clean_path.startswith('api/media/'):
+                clean_path = clean_path[len('api/media/'):]
+            elif clean_path.startswith('media/'):
+                clean_path = clean_path[len('media/'):]
+            elif clean_path.startswith('api/'):
+                clean_path = clean_path[len('api/'):]
+
+            api_path = f"/api/media/{clean_path}"
+            if request:
+                return request.build_absolute_uri(api_path)
+            return api_path
 
         # Nest the document fields in a 'documents' object as expected by the frontend
         ret['documents'] = {
-            'incorporation': get_doc_url(instance.incorporation_document, ret.pop('incorporation', None)),
-            'ownerId': get_doc_url(instance.owner_id_document, ret.pop('ownerId', None)),
-            'cheque': get_doc_url(instance.cheque_document, ret.pop('cheque', None))
+            'incorporation': get_doc_url(instance.incorporation_document),
+            'ownerId': get_doc_url(instance.owner_id_document),
+            'cheque': get_doc_url(instance.cheque_document)
         }
+        ret.pop('incorporation', None)
+        ret.pop('ownerId', None)
+        ret.pop('cheque', None)
         return ret
 
     def to_internal_value(self, data):

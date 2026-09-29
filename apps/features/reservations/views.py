@@ -13,6 +13,7 @@ from apps.features.reservations.models import (
     ReservationEvent, ReservationExtraCharge, ReservationGuest
 )
 from apps.features.availability.models import WaitlistEntry
+from apps.features.inventory.models import InventoryUnit, InventoryUnitType
 from apps.features.reservations.serializers import (
     CorporateAccountSerializer, GroupBlockSerializer, ReservationSerializer,
     ReservationListSerializer,
@@ -44,7 +45,16 @@ class CorporateAccountViewSet(viewsets.ModelViewSet):
             tenant = Tenant.objects.first()
         if not tenant:
             return CorporateAccount.objects.none()
-        return CorporateAccount.objects.filter(tenant=tenant)
+        qs = CorporateAccount.objects.filter(tenant=tenant)
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(company_name__icontains=search) |
+                Q(negotiated_rate_code__icontains=search) |
+                Q(contact_person__icontains=search)
+            )
+        return qs.order_by('-created_at')
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, 'tenant', None)
@@ -187,6 +197,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 'room_allocations__guests__guest__documents',
                 'primary_guest__contacts',
                 'primary_guest__documents',
+                'extra_charges',
             )
         else:
             qs = Reservation.objects.filter(tenant=tenant).select_related(
@@ -249,14 +260,29 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 Q(primary_guest__last_name__icontains=search) |
                 Q(primary_guest__contacts__phone__icontains=search) |
                 Q(primary_guest__contacts__value__icontains=search) |
-                Q(group_block__name__icontains=search)
+                Q(group_block__name__icontains=search) |
+                Q(room_allocations__inventory_unit__name__icontains=search)
             ).distinct()
+
+        # Opened Folio filter (active folios: checked in or has open balance)
+        opened_folio = q_params.get('opened_folio')
+        if opened_folio in ['true', '1', True]:
+            qs = qs.filter(
+                models.Q(status='CHECKED_IN') |
+                ~models.Q(balance_amount=0) |
+                ~models.Q(total_amount=models.F('paid_amount'))
+            )
 
         # Status filter
         status_val = q_params.get('status')
         if status_val and status_val != 'All':
-            mapped_status = status_val.upper().replace('-', '_').replace(' ', '_')
-            qs = qs.filter(status__iexact=mapped_status)
+            if ',' in status_val:
+                statuses = [s.strip().upper().replace('-', '_').replace(' ', '_') for s in status_val.split(',') if s.strip()]
+                if statuses:
+                    qs = qs.filter(status__in=statuses)
+            else:
+                mapped_status = status_val.upper().replace('-', '_').replace(' ', '_')
+                qs = qs.filter(status__iexact=mapped_status)
 
         ordering = q_params.get('ordering')
         if ordering:
@@ -294,6 +320,39 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             except Exception:
                 pass
         return super().list(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        tenant = getattr(request, 'tenant', None)
+        new_dep = request.data.get('departure_date') or request.data.get('check_out_date')
+        new_arr = request.data.get('arrival_date') or request.data.get('check_in_date')
+        
+        # If dates are being amended, run full stay amendment logic with rate snapshot and folio recalculation
+        if tenant and (new_dep or new_arr):
+            str_old_dep = str(instance.departure_date) if instance.departure_date else ""
+            str_new_dep = str(new_dep).split('T')[0] if new_dep else str_old_dep
+            str_old_arr = str(instance.arrival_date) if instance.arrival_date else ""
+            str_new_arr = str(new_arr).split('T')[0] if new_arr else str_old_arr
+            
+            if str_new_dep != str_old_dep or str_new_arr != str_old_arr:
+                try:
+                    from apps.features.reservations.services import ReservationModificationEngine
+                    instance = ReservationModificationEngine.amend_stay(
+                        tenant=tenant,
+                        reservation_id=instance.id,
+                        new_departure_date=str_new_dep,
+                        new_arrival_date=str_new_arr,
+                        user=request.user if request.user.is_authenticated else None
+                    )
+                    # After running amend_stay, return refreshed serialized instance
+                    serializer = self.get_serializer(instance)
+                    return Response(serializer.data, status=status.HTTP_200_OK)
+                except DjangoValidationError as e:
+                    handle_django_validation_error(e)
+                except Exception as e:
+                    return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        
+        return super().partial_update(request, *args, **kwargs)
 
     @extend_schema(request=PriceEstimationSerializer, responses={200: dict})
     @action(detail=False, methods=['post'], url_path='estimate')
@@ -406,17 +465,66 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         serializer = AssignRoomSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        room_id = serializer.validated_data.get('room_id') or serializer.validated_data.get('new_room_id')
+        try:
+            room = InventoryUnit.objects.get(id=room_id, tenant=tenant)
+        except InventoryUnit.DoesNotExist:
+            try:
+                room = InventoryUnit.objects.get(id=room_id)
+            except InventoryUnit.DoesNotExist:
+                return Response({'error': f'Room with ID {room_id} not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        allocation_id = serializer.validated_data.get('allocation_id')
+        allocation = None
+        if allocation_id:
+            try:
+                allocation = ReservationInventory.objects.get(id=allocation_id, tenant=tenant)
+            except ReservationInventory.DoesNotExist:
+                try:
+                    allocation = ReservationInventory.objects.get(id=allocation_id)
+                except ReservationInventory.DoesNotExist:
+                    pass
+
+        if not allocation:
+            allocation = reservation.room_allocations.filter(inventory_unit__isnull=True).first() or reservation.room_allocations.first()
+
+        if not allocation:
+            allocation = ReservationInventory.objects.create(
+                tenant=tenant,
+                reservation=reservation,
+                inventory_unit_type=room.inventory_unit_type,
+                inventory_unit=None,
+                check_in_date=reservation.arrival_date,
+                check_out_date=reservation.departure_date,
+                status='UNASSIGNED',
+                adult_count=1,
+                child_count=0
+            )
+
+        if 'adult_count' in serializer.validated_data and serializer.validated_data['adult_count'] is not None:
+            allocation.adult_count = serializer.validated_data['adult_count']
+        if 'child_count' in serializer.validated_data and serializer.validated_data['child_count'] is not None:
+            allocation.child_count = serializer.validated_data['child_count']
+        if 'meal_plan' in serializer.validated_data and serializer.validated_data['meal_plan']:
+            allocation.meal_plan = serializer.validated_data['meal_plan']
+        if 'room_rate' in serializer.validated_data and serializer.validated_data['room_rate'] is not None:
+            allocation.room_rate = serializer.validated_data['room_rate']
+        if 'extra_charge' in serializer.validated_data and serializer.validated_data['extra_charge'] is not None:
+            allocation.extra_charge = serializer.validated_data['extra_charge']
+        allocation.save()
+
         try:
             RoomAssignmentEngine.assign_room(
                 tenant=tenant,
-                allocation_id=serializer.validated_data['allocation_id'],
-                room_id=serializer.validated_data['room_id'],
+                allocation_id=allocation.id,
+                room_id=room.id,
                 user=request.user,
-                upgrade_reason=serializer.validated_data.get('upgrade_reason')
+                upgrade_reason=serializer.validated_data.get('upgrade_reason') or ('Auto-assigned room' if room.inventory_unit_type != allocation.inventory_unit_type else None)
             )
         except DjangoValidationError as e:
             handle_django_validation_error(e)
         # return updated reservation
+        reservation.refresh_from_db()
         output = self.get_serializer(reservation)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -558,6 +666,35 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['post', 'patch'], url_path='amend-stay')
+    def amend_stay(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+        new_dep = request.data.get('departure_date') or request.data.get('new_departure_date') or request.data.get('check_out_date')
+        new_arr = request.data.get('arrival_date') or request.data.get('new_arrival_date') or request.data.get('check_in_date')
+        if not new_dep:
+            return Response({'error': 'departure_date is required to amend stay.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from apps.features.reservations.services import ReservationModificationEngine
+            updated = ReservationModificationEngine.amend_stay(
+                tenant=tenant,
+                reservation_id=reservation.id,
+                new_departure_date=new_dep,
+                new_arrival_date=new_arr,
+                user=request.user if request.user.is_authenticated else None
+            )
+        except DjangoValidationError as e:
+            handle_django_validation_error(e)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        output = self.get_serializer(updated)
+        return Response(output.data, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=['get'], url_path='timeline')
     def timeline(self, request, pk=None):
         tenant = getattr(request, 'tenant', None)
@@ -568,6 +705,280 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         events = ReservationEvent.objects.filter(tenant=tenant, reservation=reservation).order_by('timestamp')
         serializer = ReservationEventSerializer(events, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='upcoming-self-checkins')
+    def upcoming_self_checkins(self, request):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        property_id = request.headers.get('X-Property-ID') or request.query_params.get('property_id') or request.query_params.get('property')
+        
+        from apps.core.tenants.models import Property
+        prop = None
+        if property_id:
+            prop = Property.objects.filter(id=property_id, tenant=tenant).first()
+        if not prop:
+            prop = Property.objects.filter(tenant=tenant).first()
+
+        today_local = timezone.localdate()
+        prop_bdate = prop.business_date if (prop and prop.business_date) else today_local
+        if prop_bdate < today_local:
+            prop_bdate = today_local
+            if prop and prop.business_date and prop.business_date < today_local:
+                prop.business_date = today_local
+                prop.save(update_fields=['business_date'])
+
+        date_param = request.query_params.get('date') or request.query_params.get('target_date')
+        from django.utils.dateparse import parse_date
+        from datetime import datetime, timedelta
+
+        selected_date = None
+        if date_param:
+            dp_str = str(date_param).strip()
+            if '/' in dp_str:
+                try:
+                    selected_date = datetime.strptime(dp_str, '%d/%m/%Y').date()
+                except Exception:
+                    pass
+            if not selected_date:
+                try:
+                    selected_date = parse_date(dp_str)
+                except Exception:
+                    pass
+
+        base_date = selected_date or prop_bdate
+        end_date = base_date + timedelta(days=2)
+
+        from django.db.models import Q
+        active_status_q = (
+            Q(status__iexact='CONFIRMED') | 
+            Q(status__iexact='PENDING') | 
+            Q(status__iexact='GUARANTEED')
+        )
+
+        qs = Reservation.objects.filter(
+            tenant=tenant
+        ).filter(
+            active_status_q,
+            arrival_date__gte=base_date,
+            arrival_date__lte=end_date
+        )
+
+        if prop:
+            prop_qs = qs.filter(property=prop)
+            if prop_qs.exists():
+                qs = prop_qs
+
+        search_query = request.query_params.get('search', '').strip()
+        if search_query:
+            qs = qs.filter(
+                Q(confirmation_number__icontains=search_query) |
+                Q(booking_reference__icontains=search_query) |
+                Q(primary_guest__first_name__icontains=search_query) |
+                Q(primary_guest__last_name__icontains=search_query) |
+                Q(primary_guest__contacts__phone__icontains=search_query) |
+                Q(primary_guest__contacts__email__icontains=search_query)
+            ).distinct()
+
+        qs = qs.select_related('primary_guest', 'property').prefetch_related(
+            'room_allocations__inventory_unit',
+            'room_allocations__inventory_unit_type',
+            'primary_guest__contacts',
+            'timeline_events'
+        ).order_by('arrival_date', 'confirmation_number')
+
+        results = []
+        for r in qs:
+            guest = r.primary_guest
+            contact = guest.contacts.filter(is_primary=True).first() or (guest.contacts.first() if guest else None)
+            phone = contact.phone if contact else ""
+            email = contact.email if contact else ""
+            guest_name = f"{getattr(guest, 'salutation', '') or ''} {guest.first_name} {guest.last_name}".strip() if guest else "Valued Guest"
+            
+            allocations = list(r.room_allocations.all())
+            rooms_count = len(allocations) or 1
+            to_arrive_count = sum(1 for a in allocations if a.status != 'CHECKED_IN') if allocations else 1
+
+            check_in_time = r.check_in_time or "12:00 PM"
+            check_out_time = r.check_out_time or "10:00 AM"
+            arr_str = f"{r.arrival_date.strftime('%d-%b')} {check_in_time}"
+            dep_str = f"{r.departure_date.strftime('%d-%b')} {check_out_time}"
+
+            sent_event = r.timeline_events.filter(event_type='SELF_CHECKIN_LINK_SENT').last()
+            is_sent = sent_event is not None
+            sent_at = sent_event.timestamp.isoformat() if sent_event else None
+
+            submitted_event = r.timeline_events.filter(event_type='SELF_CHECKIN_SUBMITTED').last()
+            is_submitted = submitted_event is not None
+            submitted_data = submitted_event.payload_diff if submitted_event else None
+
+            ref_today = base_date
+            can_checkin_today = (ref_today >= r.arrival_date)
+            days_diff = (r.arrival_date - ref_today).days
+            days_until_arrival = max(0, days_diff)
+
+            results.append({
+                "id": str(r.id),
+                "reserve_number": r.confirmation_number,
+                "confirmation_number": r.confirmation_number,
+                "status": r.status,
+                "status_display": "Confirmed" if r.status == 'CONFIRMED' else (r.get_status_display() if hasattr(r, 'get_status_display') else r.status),
+                "guest_name": guest_name,
+                "phone": phone,
+                "email": email,
+                "rooms_count": rooms_count,
+                "to_arrive_count": to_arrive_count,
+                "arrival_date": str(r.arrival_date),
+                "departure_date": str(r.departure_date),
+                "arrival_display": arr_str,
+                "departure_display": dep_str,
+                "is_sent": is_sent,
+                "sent_at": sent_at,
+                "is_submitted": is_submitted,
+                "submitted_data": submitted_data,
+                "can_checkin_today": can_checkin_today,
+                "days_until_arrival": days_until_arrival,
+            })
+
+        return Response({
+            "base_date": str(base_date),
+            "base_date_display": base_date.strftime('%d/%m/%Y'),
+            "property_business_date": str(prop_bdate),
+            "upcoming_days": [
+                str(base_date),
+                str(base_date + timedelta(days=1)),
+                str(base_date + timedelta(days=2))
+            ],
+            "total_count": len(results),
+            "reservations": results
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='send-self-checkin')
+    def send_self_checkin(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+        guest = reservation.primary_guest
+        contact = guest.contacts.filter(is_primary=True).first() or (guest.contacts.first() if guest else None)
+        
+        recipient_email = (request.data.get('email') or (contact.email if contact else '')).strip()
+        if not recipient_email or '@' not in recipient_email:
+            return Response(
+                {'error': 'A valid recipient email address is required to send self check-in link.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        frontend_origin = request.headers.get('Origin') or request.headers.get('Referer')
+        if frontend_origin:
+            from urllib.parse import urlparse
+            parsed = urlparse(frontend_origin)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+        else:
+            base_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+
+        self_checkin_url = f"{base_url}/self-checkin?id={reservation.id}&confirmation={reservation.confirmation_number}"
+
+        guest_name = f"{getattr(guest, 'salutation', '') or ''} {guest.first_name} {guest.last_name}".strip() if guest else "Valued Guest"
+        hotel_name = reservation.property.name if reservation.property else "Hotel"
+        arrival_formatted = reservation.arrival_date.strftime('%d %b %Y') if reservation.arrival_date else "N/A"
+        departure_formatted = reservation.departure_date.strftime('%d %b %Y') if reservation.departure_date else "N/A"
+
+        from apps.core.common.email_service import UnifiedMailService
+        subject = f"Self Check-In Invitation for Reservation #{reservation.confirmation_number} - {hotel_name}"
+        
+        email_data = {
+            "title": f"Online Self Check-in: {hotel_name}",
+            "reservation_id": reservation.confirmation_number,
+            "guest_name": guest_name,
+            "arrival_date": arrival_formatted,
+            "departure_date": departure_formatted,
+            "check_in_time": reservation.check_in_time or "12:00 PM",
+            "check_out_time": reservation.check_out_time or "10:00 AM",
+            "self_checkin_url": self_checkin_url,
+            "action_url": self_checkin_url,
+            "action_text": "Complete Self Check-In",
+            "body": f"""
+                <p>Dear <strong>{guest_name}</strong>,</p>
+                <p>We are delighted to welcome you soon to <strong>{hotel_name}</strong>!</p>
+                <p>To ensure a smooth, contactless arrival, we invite you to complete your <strong>Guest Self Check-In</strong> in advance.</p>
+                <div style="background-color: #f1f5f9; padding: 16px; border-radius: 8px; margin: 20px 0; font-family: sans-serif; font-size: 14px;">
+                    <p style="margin: 0 0 8px 0;"><strong>Reservation #:</strong> {reservation.confirmation_number}</p>
+                    <p style="margin: 0 0 8px 0;"><strong>Arrival Date:</strong> {arrival_formatted} (from {reservation.check_in_time or '12:00 PM'})</p>
+                    <p style="margin: 0 0 8px 0;"><strong>Departure Date:</strong> {departure_formatted} (until {reservation.check_out_time or '10:00 AM'})</p>
+                </div>
+                <div style="text-align: center; margin: 30px 0;">
+                    <a href="{self_checkin_url}" style="background-color: #4f46e5; color: #ffffff; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 700; font-size: 15px; display: inline-block;">
+                        🚀 Complete Self Check-In Now
+                    </a>
+                </div>
+                <p style="font-size: 13px; color: #64748b;">
+                    <em>Note: Digital check-in unlocks on your scheduled arrival date ({arrival_formatted}). You can fill in your ID details and arrival preferences anytime.</em>
+                </p>
+            """
+        }
+
+        mail_result = UnifiedMailService.send_email(
+            email_type="SELF_CHECKIN",
+            recipient_email=recipient_email,
+            recipient_name=guest_name,
+            subject=subject,
+            property_obj=reservation.property,
+            data=email_data
+        )
+
+        ReservationEvent.objects.create(
+            tenant=tenant,
+            reservation=reservation,
+            event_type='SELF_CHECKIN_LINK_SENT',
+            description=f"Self check-in link dispatched via email to {recipient_email}",
+            actor_user=request.user if request.user.is_authenticated else None,
+            payload_diff={
+                "email": recipient_email,
+                "link": self_checkin_url,
+                "sent_at": timezone.now().isoformat(),
+                "mail_service_result": mail_result
+            }
+        )
+
+        return Response({
+            "success": True,
+            "message": f"Self check-in link successfully sent to {recipient_email}",
+            "recipient_email": recipient_email,
+            "link": self_checkin_url
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='approve-self-checkin')
+    def approve_self_checkin(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+        
+        try:
+            from apps.features.reservations.services import CheckInCheckOutEngine
+            updated = CheckInCheckOutEngine.check_in(
+                tenant=tenant,
+                reservation_id=reservation.id,
+                user=request.user if request.user.is_authenticated else None
+            )
+            ReservationEvent.objects.create(
+                tenant=tenant,
+                reservation=reservation,
+                event_type='SELF_CHECKIN_APPROVED',
+                description=f"Self check-in verified and checked in by staff member {request.user.get_full_name() if request.user.is_authenticated else 'Staff'}",
+                actor_user=request.user if request.user.is_authenticated else None
+            )
+        except DjangoValidationError as e:
+            handle_django_validation_error(e)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        output = self.get_serializer(updated)
+        return Response(output.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='add-guest')
     def add_guest(self, request, pk=None):
@@ -918,21 +1329,72 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         if not tenant:
             return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        reservation = self.get_object()
         serializer = RoomChangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        new_room_id = serializer.validated_data.get('new_room_id') or serializer.validated_data.get('room_id')
+        try:
+            new_room = InventoryUnit.objects.get(id=new_room_id, tenant=tenant)
+        except InventoryUnit.DoesNotExist:
+            try:
+                new_room = InventoryUnit.objects.get(id=new_room_id)
+            except InventoryUnit.DoesNotExist:
+                return Response({'error': f'Room with ID {new_room_id} not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        allocation_id = serializer.validated_data.get('allocation_id')
+        allocation = None
+        if allocation_id:
+            try:
+                allocation = ReservationInventory.objects.get(id=allocation_id, tenant=tenant)
+            except ReservationInventory.DoesNotExist:
+                try:
+                    allocation = ReservationInventory.objects.get(id=allocation_id)
+                except ReservationInventory.DoesNotExist:
+                    pass
+
+        if not allocation:
+            allocation = reservation.room_allocations.first()
+
+        if not allocation:
+            allocation = ReservationInventory.objects.create(
+                tenant=tenant,
+                reservation=reservation,
+                inventory_unit_type=new_room.inventory_unit_type,
+                inventory_unit=new_room,
+                check_in_date=serializer.validated_data.get('new_check_in_date') or reservation.arrival_date,
+                check_out_date=serializer.validated_data.get('new_check_out_date') or reservation.departure_date,
+                status='ASSIGNED',
+                adult_count=1,
+                child_count=0
+            )
+
+        if 'adult_count' in serializer.validated_data and serializer.validated_data['adult_count'] is not None:
+            allocation.adult_count = serializer.validated_data['adult_count']
+        if 'child_count' in serializer.validated_data and serializer.validated_data['child_count'] is not None:
+            allocation.child_count = serializer.validated_data['child_count']
+        if 'meal_plan' in serializer.validated_data and serializer.validated_data['meal_plan']:
+            allocation.meal_plan = serializer.validated_data['meal_plan']
+        if 'room_rate' in serializer.validated_data and serializer.validated_data['room_rate'] is not None:
+            allocation.room_rate = serializer.validated_data['room_rate']
+        if 'extra_charge' in serializer.validated_data and serializer.validated_data['extra_charge'] is not None:
+            allocation.extra_charge = serializer.validated_data['extra_charge']
+        allocation.save()
 
         try:
             RoomAssignmentEngine.change_room(
                 tenant=tenant,
-                allocation_id=serializer.validated_data['allocation_id'],
-                new_room_id=serializer.validated_data['new_room_id'],
+                allocation_id=allocation.id,
+                new_room_id=new_room.id,
                 new_check_in_date=serializer.validated_data.get('new_check_in_date'),
                 new_check_out_date=serializer.validated_data.get('new_check_out_date'),
                 user=request.user
             )
         except DjangoValidationError as e:
             handle_django_validation_error(e)
-        return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
+
+        reservation.refresh_from_db()
+        return Response(self.get_serializer(reservation).data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'], url_path='validate-availability')
     def validate_availability(self, request):
@@ -1152,10 +1614,12 @@ class WaitlistViewSet(viewsets.ModelViewSet):
         return Response(WaitlistEntrySerializer(entry).data)
 
 
-class ReservationEventViewSet(viewsets.ReadOnlyModelViewSet):
+class ReservationEventViewSet(RedisCacheMixin, viewsets.ReadOnlyModelViewSet):
     """
     Tenant-scoped ReadOnly ViewSet for Reservation Events (Audit Trails).
+    Cached in Redis for rapid retrieval during report rendering.
     """
+    cache_timeout = 120  # 2 minutes
     serializer_class = ReservationEventSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -1166,9 +1630,11 @@ class ReservationEventViewSet(viewsets.ReadOnlyModelViewSet):
 
         qs = ReservationEvent.objects.filter(tenant=tenant).select_related(
             'reservation', 'reservation__primary_guest', 'reservation__property', 'actor_user'
+        ).prefetch_related(
+            'reservation__room_allocations__inventory_unit'
         )
 
-        property_id = self.request.query_params.get('property_id') or self.request.query_params.get('property')
+        property_id = self.request.query_params.get('property_id') or self.request.query_params.get('property') or self.request.headers.get('X-Property-ID')
         if property_id:
             qs = qs.filter(reservation__property_id=property_id)
 
@@ -1190,3 +1656,4 @@ class ReservationEventViewSet(viewsets.ReadOnlyModelViewSet):
             )
 
         return qs.order_by('-created_at')
+

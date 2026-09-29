@@ -34,12 +34,19 @@ class GuestProfileViewSet(viewsets.ModelViewSet):
             return GuestProfile.objects.none()
         
         queryset = GuestProfile.objects.filter(tenant=tenant)
-        search_query = self.request.query_params.get('search')
+        search_query = self.request.query_params.get('search') or self.request.query_params.get('query')
         if search_query:
-            queryset = queryset.filter(
-                Q(first_name__icontains=search_query) |
-                Q(last_name__icontains=search_query)
+            clean_search = search_query.strip()
+            clean_digits = ''.join(c for c in clean_search if c.isdigit())
+            q_filter = (
+                Q(first_name__icontains=clean_search) |
+                Q(last_name__icontains=clean_search) |
+                Q(contacts__email__icontains=clean_search) |
+                Q(contacts__phone__icontains=clean_search)
             )
+            if len(clean_digits) >= 4:
+                q_filter |= Q(contacts__phone__icontains=clean_digits)
+            queryset = queryset.filter(q_filter).distinct()
         return queryset
 
     @extend_schema(
@@ -331,6 +338,51 @@ class GuestContactViewSet(viewsets.ModelViewSet):
             return GuestContact.objects.none()
         return GuestContact.objects.filter(tenant=tenant)
 
+    def create(self, request, *args, **kwargs):
+        tenant = getattr(request, 'tenant', None)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = (serializer.validated_data.get('email') or '').strip()
+        phone = (serializer.validated_data.get('phone') or '').strip()
+        guest = serializer.validated_data.get('guest')
+
+        existing = None
+        if tenant:
+            if email and phone and phone not in ['+91-', '+91', '0000000000']:
+                existing = GuestContact.objects.filter(tenant=tenant, email=email, phone=phone).first()
+            if not existing and guest:
+                existing = GuestContact.objects.filter(tenant=tenant, guest=guest).first()
+            if not existing and phone and phone not in ['+91-', '+91', '0000000000']:
+                existing = GuestContact.objects.filter(tenant=tenant, phone=phone).first()
+            if not existing and email and email != 'guest@example.com':
+                existing = GuestContact.objects.filter(tenant=tenant, email=email).first()
+
+        if existing:
+            for attr, value in serializer.validated_data.items():
+                if attr == 'guest':
+                    continue
+                if value is not None and value != '' and value != '0000000000' and value != 'guest@example.com' and value != 'Address':
+                    setattr(existing, attr, value)
+            existing.save()
+            return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
+
+        try:
+            serializer.save(tenant=tenant)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Exception:
+            existing = None
+            if tenant:
+                if email and phone:
+                    existing = GuestContact.objects.filter(tenant=tenant, email=email, phone=phone).first()
+                if not existing and phone:
+                    existing = GuestContact.objects.filter(tenant=tenant, phone=phone).first()
+                if not existing and email:
+                    existing = GuestContact.objects.filter(tenant=tenant, email=email).first()
+            if existing:
+                return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 class GuestDocumentViewSet(viewsets.ModelViewSet):
     serializer_class = GuestDocumentSerializer
@@ -341,6 +393,30 @@ class GuestDocumentViewSet(viewsets.ModelViewSet):
         if not tenant:
             return GuestDocument.objects.none()
         return GuestDocument.objects.filter(tenant=tenant)
+
+    def create(self, request, *args, **kwargs):
+        tenant = getattr(request, 'tenant', None)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        guest = serializer.validated_data.get('guest')
+        doc_type = serializer.validated_data.get('document_type')
+
+        existing = None
+        if tenant and guest and doc_type:
+            existing = GuestDocument.objects.filter(tenant=tenant, guest=guest, document_type=doc_type).first()
+
+        if existing:
+            for attr, value in serializer.validated_data.items():
+                if attr == 'guest':
+                    continue
+                if value is not None and value != '':
+                    setattr(existing, attr, value)
+            existing.save()
+            return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
+
+        serializer.save(tenant=tenant)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'], url_path='upload', parser_classes=[MultiPartParser, FormParser])
     def upload(self, request):

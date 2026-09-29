@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 from apps.core.accounts.models import (
     AppUser, UserInvitation, UserAssignment, PasswordPolicy, LoginAttempt,
@@ -67,68 +68,104 @@ class AppUserSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id', 'created_at', 'updated_at', 'is_staff')
 
+    def validate_username(self, value):
+        if not value:
+            return value
+        cleaned = value.strip()
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None) if request else None
+        instance = self.instance
+        qs = AppUser.objects.filter(username__iexact=cleaned)
+        if tenant:
+            qs = qs.filter(tenant=tenant)
+        if instance:
+            qs = qs.exclude(id=instance.id)
+        if qs.exists():
+            raise serializers.ValidationError("A staff member with this username already exists.")
+        return cleaned
+
+    def validate_email(self, value):
+        if not value:
+            return value
+        cleaned = value.strip().lower()
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None) if request else None
+        instance = self.instance
+        qs = AppUser.objects.filter(email__iexact=cleaned)
+        if tenant:
+            qs = qs.filter(tenant=tenant)
+        if instance:
+            qs = qs.exclude(id=instance.id)
+        if qs.exists():
+            raise serializers.ValidationError("A staff member with this email already exists.")
+        return cleaned
+
     def create(self, validated_data):
         assigned_prop_ids = validated_data.pop('assigned_property_ids', None)
         password = validated_data.pop('password', None)
-        user = super().create(validated_data)
-        if password:
-            user.set_password(password)
-            user.save()
+        with transaction.atomic():
+            user = super().create(validated_data)
+            if password:
+                user.set_password(password)
+                user.save()
 
-        if assigned_prop_ids is not None and user.tenant:
-            from apps.core.tenants.models import Property
-            from apps.core.rbac.models import UserPropertyRole
-            UserAssignment.objects.filter(user=user).delete()
-            UserPropertyRole.objects.filter(user=user).delete()
-            for pid in assigned_prop_ids:
-                prop_obj = Property.objects.filter(id=pid, tenant=user.tenant).first()
-                if prop_obj:
-                    UserAssignment.objects.create(
-                        user=user,
-                        tenant=user.tenant,
-                        property=prop_obj,
-                        role=user.role
-                    )
-                    if user.role:
-                        UserPropertyRole.objects.create(
+            if assigned_prop_ids is not None and user.tenant:
+                from apps.core.tenants.models import Property
+                from apps.core.rbac.models import UserPropertyRole
+                unique_prop_ids = list(dict.fromkeys(assigned_prop_ids))
+                UserAssignment.objects.filter(user=user).delete()
+                UserPropertyRole.objects.filter(user=user).delete()
+                for pid in unique_prop_ids:
+                    prop_obj = Property.objects.filter(id=pid, tenant=user.tenant).first()
+                    if prop_obj:
+                        UserAssignment.objects.create(
                             user=user,
                             tenant=user.tenant,
                             property=prop_obj,
                             role=user.role
                         )
-        return user
+                        if user.role:
+                            UserPropertyRole.objects.create(
+                                user=user,
+                                tenant=user.tenant,
+                                property=prop_obj,
+                                role=user.role
+                            )
+            return user
 
     def update(self, instance, validated_data):
         assigned_prop_ids = validated_data.pop('assigned_property_ids', None)
         password = validated_data.pop('password', None)
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        if password:
-            instance.set_password(password)
-        instance.save()
+        with transaction.atomic():
+            for attr, value in validated_data.items():
+                setattr(instance, attr, value)
+            if password:
+                instance.set_password(password)
+            instance.save()
 
-        if assigned_prop_ids is not None and instance.tenant:
-            from apps.core.tenants.models import Property
-            from apps.core.rbac.models import UserPropertyRole
-            UserAssignment.objects.filter(user=instance).delete()
-            UserPropertyRole.objects.filter(user=instance).delete()
-            for pid in assigned_prop_ids:
-                prop_obj = Property.objects.filter(id=pid, tenant=instance.tenant).first()
-                if prop_obj:
-                    UserAssignment.objects.create(
-                        user=instance,
-                        tenant=instance.tenant,
-                        property=prop_obj,
-                        role=instance.role
-                    )
-                    if instance.role:
-                        UserPropertyRole.objects.create(
+            if assigned_prop_ids is not None and instance.tenant:
+                from apps.core.tenants.models import Property
+                from apps.core.rbac.models import UserPropertyRole
+                unique_prop_ids = list(dict.fromkeys(assigned_prop_ids))
+                UserAssignment.objects.filter(user=instance).delete()
+                UserPropertyRole.objects.filter(user=instance).delete()
+                for pid in unique_prop_ids:
+                    prop_obj = Property.objects.filter(id=pid, tenant=instance.tenant).first()
+                    if prop_obj:
+                        UserAssignment.objects.create(
                             user=instance,
                             tenant=instance.tenant,
                             property=prop_obj,
                             role=instance.role
                         )
-        return instance
+                        if instance.role:
+                            UserPropertyRole.objects.create(
+                                user=instance,
+                                tenant=instance.tenant,
+                                property=prop_obj,
+                                role=instance.role
+                            )
+            return instance
 
 class PlatformUserSerializer(serializers.ModelSerializer):
     class Meta:
