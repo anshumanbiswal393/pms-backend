@@ -143,8 +143,11 @@ class Reservation(BaseModel):
     def gross_total(self):
         from decimal import Decimal
         extra_sum = Decimal('0.00')
-        if hasattr(self, 'extra_charges'):
-            extra_sum = sum((ec.amount + ec.tax_amount for ec in self.extra_charges.all()), Decimal('0.00'))
+        try:
+            if hasattr(self, 'extra_charges'):
+                extra_sum = sum((ec.amount + ec.tax_amount for ec in self.extra_charges.all()), Decimal('0.00'))
+        except Exception:
+            extra_sum = Decimal('0.00')
         net = (self.paid_amount or Decimal('0.00')) + (self.balance_amount or Decimal('0.00'))
         base_calc = (self.total_amount or Decimal('0.00')) + (self.tax_amount or Decimal('0.00')) - (self.discount_amount or Decimal('0.00'))
         return max(net, base_calc + extra_sum, base_calc)
