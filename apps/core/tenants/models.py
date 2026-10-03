@@ -35,10 +35,17 @@ class Tenant(models.Model):
 class Property(BaseModel):
     PROPERTY_TYPE_CHOICES = (
         ('HOTEL', 'Hotel'),
+        ('RESORT', 'Resort'),
         ('VILLA', 'Villa'),
         ('VACATION_RENTAL', 'Vacation Rental'),
         ('HOSTEL', 'Hostel'),
         ('APARTMENT', 'Apartment'),
+        ('HOMESTAY', 'Homestay'),
+        ('BED_AND_BREAKFAST', 'Bed & Breakfast'),
+        ('MOTEL', 'Motel'),
+        ('GUEST_HOUSE', 'Guest House'),
+        ('HERITAGE_HOTEL', 'Heritage Hotel'),
+        ('CAMP_AND_GLAMPING', 'Camp & Glamping'),
         ('OTHER', 'Other'),
     )
 

@@ -153,7 +153,31 @@ class SuperadminPropertySerializer(serializers.ModelSerializer):
             'contact_phone': {'required': False, 'allow_blank': True},
             'currency': {'required': False, 'allow_blank': True},
             'timezone': {'required': False, 'allow_blank': True},
+            'subscription_end_date': {'required': False, 'allow_null': True},
         }
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            data = data.copy()
+            t_val = data.get('tenant')
+            if not t_val or t_val in ('undefined', 'null', ''):
+                data['tenant'] = None
+            elif isinstance(t_val, str) and not Tenant.objects.filter(id=t_val).exists():
+                data['tenant'] = None
+
+            s_date = data.get('subscription_end_date')
+            if not s_date or s_date in ('undefined', 'null', ''):
+                data['subscription_end_date'] = None
+
+            p_type = data.get('property_type')
+            if p_type:
+                p_norm = str(p_type).strip().upper().replace(' ', '_').replace('-', '_')
+                valid_types = [c[0] for c in Property.PROPERTY_TYPE_CHOICES]
+                if p_norm in valid_types:
+                    data['property_type'] = p_norm
+                else:
+                    data['property_type'] = 'HOTEL'
+        return super().to_internal_value(data)
 
 
 
