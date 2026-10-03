@@ -88,17 +88,25 @@ def fetch_pms_property_by_slug(slug_lower):
         if not slug_raw:
             return None
 
+        # Pass 1: Try direct match on name or ID first (single indexed DB query)
+        exact_match = PmsProperty.objects.filter(
+            models.Q(name__iexact=slug_raw) |
+            models.Q(id__iexact=slug_raw)
+        ).first()
+        if exact_match:
+            return exact_match
+
         slug_clean = re.sub(r'[^a-z0-9]', '', slug_raw)
         # Strip prefixes/suffixes like 'hotel-', 'resort-', etc.
         slug_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', slug_raw)
         slug_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', slug_core).strip()
         slug_core_clean = re.sub(r'[^a-z0-9]', '', slug_core)
 
-        all_props = list(PmsProperty.objects.all())
+        all_props = list(PmsProperty.objects.all().only('id', 'name', 'booking_engine_settings'))
         if not all_props:
             return None
 
-        # Pass 1: Exact matches on slug, name, ID, or hotel_id
+        # Pass 2: Exact matches on slug, name, ID, or hotel_id
         for prop in all_props:
             prop_settings = prop.booking_engine_settings or {}
             p_slug = str(prop_settings.get('slug') or getattr(prop, 'slug', '') or prop.name.lower().replace(' ', '-')).strip().lower()
@@ -109,7 +117,7 @@ def fetch_pms_property_by_slug(slug_lower):
             if slug_raw in (p_slug, p_name, p_id, p_hotel_id):
                 return prop
 
-        # Pass 2: Clean alphanumeric exact match
+        # Pass 3: Clean alphanumeric exact match
         if slug_clean:
             for prop in all_props:
                 prop_settings = prop.booking_engine_settings or {}
@@ -121,7 +129,7 @@ def fetch_pms_property_by_slug(slug_lower):
                 if slug_clean in (pslug_clean, pname_clean):
                     return prop
 
-        # Pass 3: Core stripped prefix/suffix match (e.g. "hotel-xyz" vs "xyz" or "xyz-hotel")
+        # Pass 4: Core stripped prefix/suffix match (e.g. "hotel-xyz" vs "xyz" or "xyz-hotel")
         if slug_core_clean:
             for prop in all_props:
                 prop_settings = prop.booking_engine_settings or {}
@@ -138,7 +146,7 @@ def fetch_pms_property_by_slug(slug_lower):
                 if slug_core_clean in (p_core_clean, p_name_core_clean) or slug_clean in (p_core_clean, p_name_core_clean):
                     return prop
 
-        # Pass 4: Substring containment for multi-word property names (min 3 chars)
+        # Pass 5: Substring containment for multi-word property names (min 3 chars)
         if len(slug_clean) >= 3:
             for prop in all_props:
                 p_name = str(prop.name).strip().lower()
@@ -156,42 +164,43 @@ def sync_hotel_from_pms(hotel, pms_p):
     return sync_pms_property_to_booking_engine(pms_p)
 
 
-def get_or_create_hotel_tenant(slug):
+def get_or_create_hotel_tenant(slug, force_sync=False):
     slug_raw = urllib.parse.unquote(str(slug or '')).strip().strip('/').lower()
     if not slug_raw:
         slug_raw = 'retrod'
 
-    # 1. Try fetching real property details from PMS
+    # 1. If not forcing sync, check if Hotel already exists in apps.booking DB (instant DB query)
+    if not force_sync:
+        hotel = Hotel.objects.filter(slug__iexact=slug_raw).first()
+        if not hotel:
+            slug_clean = re.sub(r'[^a-z0-9]', '', slug_raw)
+            slug_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', slug_raw)
+            slug_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', slug_core).strip()
+            slug_core_clean = re.sub(r'[^a-z0-9]', '', slug_core)
+
+            for h in Hotel.objects.all():
+                h_slug_clean = re.sub(r'[^a-z0-9]', '', h.slug)
+                h_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', h.slug)
+                h_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', h_core).strip()
+                h_core_clean = re.sub(r'[^a-z0-9]', '', h_core)
+
+                if slug_clean and slug_clean == h_slug_clean:
+                    hotel = h
+                    break
+                if slug_core_clean and (slug_core_clean == h_core_clean or slug_clean == h_core_clean or slug_core_clean == h_slug_clean):
+                    hotel = h
+                    break
+                if str(h.id).lower() == slug_raw:
+                    hotel = h
+                    break
+
+        if hotel:
+            return hotel
+
+    # 2. Hotel not found in booking DB (or force_sync is True) -> fetch from PMS and sync
     prop = fetch_pms_property_by_slug(slug_raw)
     if prop:
         return sync_pms_property_to_booking_engine(prop)
-
-    # 2. Check if Hotel exists in apps.booking DB
-    hotel = Hotel.objects.filter(slug__iexact=slug_raw).first()
-    if not hotel:
-        slug_clean = re.sub(r'[^a-z0-9]', '', slug_raw)
-        slug_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', slug_raw)
-        slug_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', slug_core).strip()
-        slug_core_clean = re.sub(r'[^a-z0-9]', '', slug_core)
-
-        for h in Hotel.objects.all():
-            h_slug_clean = re.sub(r'[^a-z0-9]', '', h.slug)
-            h_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', h.slug)
-            h_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', h_core).strip()
-            h_core_clean = re.sub(r'[^a-z0-9]', '', h_core)
-
-            if slug_clean and slug_clean == h_slug_clean:
-                hotel = h
-                break
-            if slug_core_clean and (slug_core_clean == h_core_clean or slug_clean == h_core_clean or slug_core_clean == h_slug_clean):
-                hotel = h
-                break
-            if str(h.id).lower() == slug_raw:
-                hotel = h
-                break
-
-    if hotel:
-        return hotel
 
     # 3. If generic root query ('demo-retrod', 'retrod', 'demo', 'default', '') and no specific hotel found, load first PMS property
     if slug_raw in ['demo-retrod', 'retrod', 'demo', 'default', 'hotel', '']:
@@ -206,13 +215,30 @@ def get_or_create_hotel_tenant(slug):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def hotel_detail(request, slug=None):
+    from django.core.cache import cache
     raw_slug = str(slug or get_slug_from_request(request) or '').strip().strip('/')
     target_slug = urllib.parse.unquote(raw_slug).lower()
-    hotel = get_or_create_hotel_tenant(target_slug)
+    
+    force_refresh = request.GET.get('refresh') == 'true'
+    cache_key = f"hotel_detail_cache_{target_slug}"
+    if not force_refresh:
+        try:
+            cached_data = cache.get(cache_key)
+            if cached_data:
+                return Response({'success': True, 'hotel': cached_data})
+        except Exception:
+            pass
+
+    hotel = get_or_create_hotel_tenant(target_slug, force_sync=force_refresh)
     if not hotel:
         return Response({'success': False, 'message': 'Hotel not found'}, status=status.HTTP_404_NOT_FOUND)
     serializer = HotelSerializer(hotel, context={'request': request})
-    return Response({'success': True, 'hotel': serializer.data})
+    data = serializer.data
+    try:
+        cache.set(cache_key, data, timeout=300)
+    except Exception:
+        pass
+    return Response({'success': True, 'hotel': data})
 
 @api_view(['POST', 'PUT'])
 @permission_classes([AllowAny])
@@ -366,27 +392,48 @@ def update_hotel_settings(request, slug=None):
                     p_title = p_data.get('title')
                     if not p_title:
                         continue
+                    
+                    s_price = float(p_data.get('single_occupancy_price') or p_data.get('singlePrice') or room.base_price or room.starting_price)
+                    tax_pct = None
+                    if p_data.get('taxPct') is not None:
+                        tax_pct = float(p_data['taxPct'])
+                    elif p_data.get('tax_pct') is not None:
+                        tax_pct = float(p_data['tax_pct'])
+                    elif p_data.get('single_occupancy_tax') is not None and s_price > 0:
+                        tax_pct = round((float(p_data['single_occupancy_tax']) / s_price) * 100)
+                    else:
+                        tax_pct = 12.0
+
+                    if p_data.get('single_occupancy_tax') is not None:
+                        s_tax = float(p_data['single_occupancy_tax'])
+                    else:
+                        s_tax = round(s_price * (tax_pct / 100.0), 2)
+
+                    d_price = float(p_data.get('double_occupancy_price') or p_data.get('doublePrice') or round(s_price * 1.2, 2))
+                    if p_data.get('double_occupancy_tax') is not None:
+                        d_tax = float(p_data['double_occupancy_tax'])
+                    else:
+                        d_tax = round(d_price * (tax_pct / 100.0), 2)
+
                     plan = RatePlan.objects.filter(room_type=room, title=p_title).first()
                     if not plan:
                         plan = RatePlan.objects.create(
                             room_type=room,
                             title=p_title,
                             description=p_data.get('description', ''),
-                            single_occupancy_price=p_data.get('single_occupancy_price', room.starting_price),
-                            single_occupancy_tax=p_data.get('single_occupancy_tax', 0),
-                            double_occupancy_price=p_data.get('double_occupancy_price', room.starting_price),
-                            double_occupancy_tax=p_data.get('double_occupancy_tax', 0),
+                            single_occupancy_price=s_price,
+                            single_occupancy_tax=s_tax,
+                            double_occupancy_price=d_price,
+                            double_occupancy_tax=d_tax,
                             extra_adult_price=float(p_data.get('extra_adult_price') or p_data.get('extraAdultPrice') or 700.0),
                             extra_child_price=float(p_data.get('extra_child_price') or p_data.get('extraChildPrice') or 500.0),
                             is_popular=p_data.get('is_popular', False)
                         )
                     else:
-                        if 'single_occupancy_price' in p_data or 'singlePrice' in p_data:
-                            plan.single_occupancy_price = p_data.get('single_occupancy_price') or p_data.get('singlePrice')
-                        if 'single_occupancy_tax' in p_data: plan.single_occupancy_tax = p_data['single_occupancy_tax']
-                        if 'double_occupancy_price' in p_data or 'doublePrice' in p_data:
-                            plan.double_occupancy_price = p_data.get('double_occupancy_price') or p_data.get('doublePrice')
-                        if 'double_occupancy_tax' in p_data: plan.double_occupancy_tax = p_data['double_occupancy_tax']
+                        plan.single_occupancy_price = s_price
+                        plan.single_occupancy_tax = s_tax
+                        plan.double_occupancy_price = d_price
+                        plan.double_occupancy_tax = d_tax
                         if 'extra_adult_price' in p_data or 'extraAdultPrice' in p_data:
                             plan.extra_adult_price = float(p_data.get('extra_adult_price') or p_data.get('extraAdultPrice') or 700.0)
                         if 'extra_child_price' in p_data or 'extraChildPrice' in p_data:
@@ -529,6 +576,19 @@ def update_hotel_settings(request, slug=None):
             PmsProperty.objects.filter(id=pms_prop.id).update(booking_engine_settings=current_be)
     except Exception as e:
         print(f"Notice: PMS Property write-back notice: {e}")
+
+    try:
+        from django.core.cache import cache
+        cache.delete(f"hotel_detail_cache_{target_slug}")
+        cache.delete(f"hotel_detail_cache_{hotel.slug}")
+        cache.delete(f"hotel_detail_cache_{target_slug.lower()}")
+        cache.delete(f"hotel_detail_cache_{hotel.slug.lower()}")
+        cache.delete(f"hotel_detail_{target_slug}")
+        cache.delete(f"hotel_detail_{hotel.slug}")
+        cache.delete(f"hotel_detail_{target_slug.lower()}")
+        cache.delete(f"hotel_detail_{hotel.slug.lower()}")
+    except Exception:
+        pass
 
     serializer = HotelSerializer(hotel, context={'request': request})
     return Response({'success': True, 'message': 'Booking engine settings updated successfully!', 'hotel': serializer.data})

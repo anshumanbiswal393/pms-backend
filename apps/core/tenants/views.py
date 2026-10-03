@@ -46,12 +46,114 @@ class SuperadminPropertyViewSet(viewsets.ModelViewSet):
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
-        # Always return all properties in the system so all created hotels are listed in the table
-        return Property.objects.all().order_by('-created_at')
+        user = self.request.user
+
+        # 1. Unauthenticated requests (e.g. guest booking engine looking up property data)
+        if not user or not user.is_authenticated:
+            slug_param = self.request.query_params.get('slug')
+            if slug_param:
+                return Property.objects.filter(booking_engine_settings__slug=slug_param).order_by('-created_at')
+            return Property.objects.all().order_by('-created_at')
+
+        # 2. Retrod Super Admin: can see all properties across all tenants
+        is_super = (
+            user.is_superuser or
+            (getattr(user, 'is_staff', False) and user.is_superuser) or
+            (getattr(user, 'role', None) and getattr(user.role, 'code', None) in ['super_admin', 'retrod_admin']) or
+            (getattr(user, 'role', None) and getattr(user.role, 'name', None) in ['Super Admin', 'Retrod Super Admin'])
+        )
+        if is_super:
+            tenant_param = self.request.query_params.get('tenant') or self.request.headers.get('X-Tenant-ID')
+            if tenant_param:
+                return Property.objects.filter(tenant_id=tenant_param).order_by('-created_at')
+            return Property.objects.all().order_by('-created_at')
+
+        # 3. Tenant / Hotelier wise: strictly isolated to their own tenant's created properties
+        tenant = getattr(user, 'tenant', None) or getattr(self.request, 'tenant', None)
+        if tenant:
+            return Property.objects.filter(tenant=tenant).order_by('-created_at')
+
+        return Property.objects.none()
 
     def perform_create(self, serializer):
         user = self.request.user if self.request.user.is_authenticated else None
-        prop = serializer.save(created_by=user)
+        
+        # 1. Check validated data
+        tenant = serializer.validated_data.get('tenant')
+        
+        # 2. Check authenticated user's tenant
+        if not tenant and user:
+            tenant = getattr(user, 'tenant', None)
+            
+        # 3. Check request tenant from middleware
+        if not tenant:
+            tenant = getattr(self.request, 'tenant', None)
+            
+        # 4. Check tenant ID in request payload
+        if not tenant:
+            tenant_id = self.request.data.get('tenant') or self.request.data.get('tenant_id') or self.request.headers.get('X-Tenant-ID')
+            if tenant_id:
+                tenant = Tenant.objects.filter(id=tenant_id).first()
+                
+        # 5. Check tenant name provided in onboarding
+        if not tenant:
+            tenant_name = (self.request.data.get('tenant_name') or '').strip()
+            if tenant_name:
+                import re
+                sub = re.sub(r'[^a-z0-9]+', '-', tenant_name.lower()).strip('-') or 'tenant'
+                orig_sub = sub
+                idx = 1
+                while Tenant.objects.filter(subdomain=sub).exists():
+                    sub = f"{orig_sub}-{idx}"
+                    idx += 1
+                tenant = Tenant.objects.create(
+                    name=tenant_name,
+                    subdomain=sub,
+                    country='India',
+                    currency='INR',
+                    timezone='Asia/Kolkata',
+                    status='active'
+                )
+
+        # 6. Fallback to first active tenant or create default tenant
+        if not tenant:
+            tenant = Tenant.objects.filter(status='active').first() or Tenant.objects.first()
+            if not tenant:
+                tenant = Tenant.objects.create(
+                    name='Primary Hotel Group',
+                    subdomain='primary-hotel',
+                    country='India',
+                    currency='INR',
+                    timezone='Asia/Kolkata',
+                    status='active'
+                )
+
+        # Link user to tenant if user is tenantless
+        if user and not getattr(user, 'tenant', None):
+            try:
+                user.tenant = tenant
+                user.save(update_fields=['tenant'])
+            except Exception:
+                pass
+
+        prop = serializer.save(created_by=user, tenant=tenant)
+
+        # Automatically assign the creator to the new property
+        if user:
+            try:
+                from apps.core.rbac.models import Role, UserPropertyRole
+                owner_role = Role.objects.filter(tenant=tenant, code='owner').first() or Role.objects.filter(code='owner').first()
+                if owner_role:
+                    UserPropertyRole.objects.get_or_create(
+                        tenant=tenant,
+                        user=user,
+                        property=prop,
+                        defaults={'role': owner_role}
+                    )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Could not assign creator role: {e}")
+
         try:
             from apps.booking.sync import sync_pms_property_to_booking_engine
             sync_pms_property_to_booking_engine(prop)
@@ -97,6 +199,35 @@ class SuperadminPropertyViewSet(viewsets.ModelViewSet):
         file_url = request.build_absolute_uri(fs.url(filename))
         
         return Response({'image_url': file_url}, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'], url_path='fetch-url-data')
+    def fetch_url_data(self, request):
+        from rest_framework.response import Response
+        from rest_framework import status
+        from apps.core.tenants.metadata_fetcher import extract_hotel_metadata
+
+        url = request.data.get('url') or request.data.get('website') or request.data.get('google_map_url')
+        hotel_name = request.data.get('hotel_name') or request.data.get('name') or ''
+        city = request.data.get('city') or ''
+
+        if not url:
+            return Response({'error': 'URL is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = extract_hotel_metadata(url, hotel_name=hotel_name, city=city)
+        return Response(data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='fetch-google-data')
+    def fetch_google_data(self, request):
+        from rest_framework.response import Response
+        from rest_framework import status
+        from apps.core.tenants.metadata_fetcher import extract_hotel_metadata
+
+        url = request.data.get('google_map_url') or request.data.get('url') or ''
+        hotel_name = request.data.get('hotel_name') or ''
+        city = request.data.get('city') or ''
+
+        data = extract_hotel_metadata(url, hotel_name=hotel_name, city=city)
+        return Response(data, status=status.HTTP_200_OK)
 
 
 

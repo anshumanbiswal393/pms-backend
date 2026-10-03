@@ -17,9 +17,23 @@ class AmenitySerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class RatePlanSerializer(serializers.ModelSerializer):
+    tax_percent = serializers.SerializerMethodField()
+    tax_pct = serializers.SerializerMethodField()
+
     class Meta:
         model = RatePlan
         fields = '__all__'
+
+    def get_tax_percent(self, obj):
+        try:
+            if obj.single_occupancy_price and float(obj.single_occupancy_price) > 0 and obj.single_occupancy_tax is not None:
+                return round((float(obj.single_occupancy_tax) / float(obj.single_occupancy_price)) * 100)
+        except Exception:
+            pass
+        return 12
+
+    def get_tax_pct(self, obj):
+        return self.get_tax_percent(obj)
 
 class RoomTypeSerializer(serializers.ModelSerializer):
     rate_plans = RatePlanSerializer(many=True, read_only=True)
@@ -65,6 +79,7 @@ class HotelSerializer(serializers.ModelSerializer):
     reviews = serializers.JSONField(source='google_reviews_data', read_only=True)
     banquets = serializers.SerializerMethodField()
     events_and_banquets = serializers.SerializerMethodField()
+    enable_event_booking = serializers.SerializerMethodField()
     rates_matrix = serializers.SerializerMethodField()
     google_reviews_widget_id = serializers.SerializerMethodField()
     elfsight_widget_id = serializers.SerializerMethodField()
@@ -101,6 +116,10 @@ class HotelSerializer(serializers.ModelSerializer):
 
     def get_events_and_banquets(self, obj):
         return self.get_banquets(obj)
+
+    def get_enable_event_booking(self, obj):
+        settings = obj.booking_engine_settings or {}
+        return settings.get('enable_event_booking', True)
 
     def get_rates_matrix(self, obj):
         settings = obj.booking_engine_settings or {}

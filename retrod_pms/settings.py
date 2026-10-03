@@ -136,6 +136,15 @@ else:
 
 
 
+# Caching configuration for high-speed sub-millisecond API responses
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'retrod-booking-cache',
+        'TIMEOUT': 300,
+    }
+}
+
 # Custom Auth Model
 AUTH_USER_MODEL = 'accounts.AppUser'
 

@@ -128,6 +128,7 @@ class PropertySerializer(serializers.ModelSerializer):
 
 class SuperadminPropertySerializer(serializers.ModelSerializer):
     tenant_name = serializers.CharField(source='tenant.name', read_only=True)
+    tenant = serializers.PrimaryKeyRelatedField(queryset=Tenant.objects.all(), required=False, allow_null=True)
 
     class Meta:
         model = Property
@@ -141,6 +142,18 @@ class SuperadminPropertySerializer(serializers.ModelSerializer):
             'luxury_tax', 'amenities', 'website_logo', 'kot_logo', 'photos',
             'subscription_end_date', 'booking_engine_settings'
         ]
+        extra_kwargs = {
+            'postal_code': {'required': False, 'allow_blank': True},
+            'address_line_1': {'required': False, 'allow_blank': True},
+            'address_line_2': {'required': False, 'allow_blank': True},
+            'city': {'required': False, 'allow_blank': True},
+            'state': {'required': False, 'allow_blank': True},
+            'country': {'required': False, 'allow_blank': True},
+            'contact_email': {'required': False, 'allow_blank': True},
+            'contact_phone': {'required': False, 'allow_blank': True},
+            'currency': {'required': False, 'allow_blank': True},
+            'timezone': {'required': False, 'allow_blank': True},
+        }
 
 
 
