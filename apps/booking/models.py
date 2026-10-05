@@ -31,7 +31,7 @@ class Hotel(models.Model):
     what_makes_special = models.TextField(blank=True, null=True)
     backstory = models.TextField(blank=True, null=True)
     booking_engine_settings = models.JSONField(default=dict, blank=True)
-    enable_google_reviews = models.BooleanField(default=True)
+    enable_google_reviews = models.BooleanField(default=False)
     google_reviews_data = models.JSONField(default=list, blank=True)
     short_description = models.TextField(blank=True, null=True)
     facebook_url = models.URLField(max_length=255, default='https://facebook.com/retrod', blank=True, null=True)

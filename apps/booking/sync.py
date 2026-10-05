@@ -149,7 +149,7 @@ def sync_pms_property_to_booking_engine(prop_or_dict):
     elif pms_p.get('enable_google_reviews') is not None:
         hotel.enable_google_reviews = bool(pms_p.get('enable_google_reviews'))
     else:
-        hotel.enable_google_reviews = True
+        hotel.enable_google_reviews = bool(canonical_slug in ['retrod', 'demo', 'demo-retrod'])
 
     g_rating = settings.get('google_rating') or pms_p.get('google_rating')
     if g_rating is not None and str(g_rating).strip() != "" and str(g_rating).strip() != "0":

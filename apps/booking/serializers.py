@@ -160,8 +160,10 @@ class HotelSerializer(serializers.ModelSerializer):
             if data.get('total_reviews') in [0, '0', None]:
                 data['total_reviews'] = 148
         settings = instance.booking_engine_settings or {}
-        if data.get('enable_google_reviews') is None:
-            data['enable_google_reviews'] = settings.get('enable_google_reviews', False)
+        if 'enable_google_reviews' in settings:
+            data['enable_google_reviews'] = bool(settings['enable_google_reviews'])
+        else:
+            data['enable_google_reviews'] = bool(getattr(instance, 'enable_google_reviews', False) or is_demo)
         return data
 
 class GuestSerializer(serializers.ModelSerializer):
