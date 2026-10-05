@@ -411,21 +411,6 @@ def sync_pms_property_to_booking_engine(prop_or_dict):
 
         # ── Amenities Synchronization ──────────────────────────────────────────────
         pms_amenities = settings.get('amenities') or pms_p.get('amenities') or []
-        if not pms_amenities:
-            pms_amenities = [
-                {'name': 'Free High-Speed Wi-Fi', 'icon_name': 'wifi'},
-                {'name': 'Air Conditioning (AC)', 'icon_name': 'wind'},
-                {'name': 'Swimming Pool & Sun Deck', 'icon_name': 'droplet'},
-                {'name': 'Multi-Cuisine Fine Dining Restaurant', 'icon_name': 'utensils'},
-                {'name': '24/7 Front Desk & Room Service', 'icon_name': 'clock'},
-                {'name': 'Fitness Center & Gym', 'icon_name': 'activity'},
-                {'name': 'Smart 4K LED Television', 'icon_name': 'tv'},
-                {'name': 'Premium Ensuite Bathroom & Geyser', 'icon_name': 'thermometer'},
-                {'name': 'Daily Housekeeping & Linen Care', 'icon_name': 'sparkles'},
-                {'name': 'Airport & Transit Shuttle Support', 'icon_name': 'truck'},
-                {'name': 'EV Charging Station', 'icon_name': 'zap'},
-                {'name': 'Secure 24/7 CCTV & Parking', 'icon_name': 'shield'},
-            ]
         HotelAmenity.objects.filter(hotel=hotel).delete()
         if pms_amenities and isinstance(pms_amenities, list):
             amenities_to_link = []

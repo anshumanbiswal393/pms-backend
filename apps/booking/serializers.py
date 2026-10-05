@@ -113,25 +113,14 @@ class HotelSerializer(serializers.ModelSerializer):
             res = []
             for idx, a in enumerate(pms_amenities):
                 if isinstance(a, dict):
-                    res.append({'id': idx + 1, 'name': a.get('name', ''), 'icon_name': a.get('icon_name') or a.get('icon') or 'sparkles'})
-                else:
-                    res.append({'id': idx + 1, 'name': str(a), 'icon_name': 'sparkles'})
-            if res:
-                return res
-        return [
-            {'id': 1, 'name': 'Free High-Speed Wi-Fi', 'icon_name': 'wifi'},
-            {'id': 2, 'name': 'Air Conditioning (AC)', 'icon_name': 'wind'},
-            {'id': 3, 'name': 'Swimming Pool & Sun Deck', 'icon_name': 'droplet'},
-            {'id': 4, 'name': 'Multi-Cuisine Fine Dining Restaurant', 'icon_name': 'utensils'},
-            {'id': 5, 'name': '24/7 Front Desk & Room Service', 'icon_name': 'clock'},
-            {'id': 6, 'name': 'Fitness Center & Gym', 'icon_name': 'activity'},
-            {'id': 7, 'name': 'Smart 4K LED Television', 'icon_name': 'tv'},
-            {'id': 8, 'name': 'Premium Ensuite Bathroom & Geyser', 'icon_name': 'thermometer'},
-            {'id': 9, 'name': 'Daily Housekeeping & Linen Care', 'icon_name': 'sparkles'},
-            {'id': 10, 'name': 'Airport & Transit Shuttle Support', 'icon_name': 'truck'},
-            {'id': 11, 'name': 'EV Charging Station', 'icon_name': 'zap'},
-            {'id': 12, 'name': 'Secure 24/7 CCTV & Parking', 'icon_name': 'shield'},
-        ]
+                    if a.get('enabled') is False:
+                        continue
+                    if a.get('name'):
+                        res.append({'id': idx + 1, 'name': a.get('name', ''), 'icon_name': a.get('icon_name') or a.get('icon') or 'sparkles'})
+                elif a and str(a).strip():
+                    res.append({'id': idx + 1, 'name': str(a).strip(), 'icon_name': 'sparkles'})
+            return res
+        return []
 
     def get_promos(self, obj):
         return PromoCodeSerializer(obj.promo_codes.all(), many=True).data
@@ -164,15 +153,15 @@ class HotelSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        # If google_rating is 0.0 or 0, return 4.8 default rating for premium display
-        if data.get('google_rating') in [0, 0.0, '0.0', '0.00', '0', None]:
-            data['google_rating'] = 4.8
-        if data.get('total_reviews') in [0, '0', None]:
-            data['total_reviews'] = 148
-        if data.get('enable_google_reviews') is None or data.get('enable_google_reviews') is False:
-            # Check settings
-            settings = instance.booking_engine_settings or {}
-            data['enable_google_reviews'] = settings.get('enable_google_reviews', True)
+        is_demo = instance.slug in ['retrod', 'demo', 'demo-retrod']
+        if is_demo:
+            if data.get('google_rating') in [0, 0.0, '0.0', '0.00', '0', None]:
+                data['google_rating'] = 4.8
+            if data.get('total_reviews') in [0, '0', None]:
+                data['total_reviews'] = 148
+        settings = instance.booking_engine_settings or {}
+        if data.get('enable_google_reviews') is None:
+            data['enable_google_reviews'] = settings.get('enable_google_reviews', False)
         return data
 
 class GuestSerializer(serializers.ModelSerializer):

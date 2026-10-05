@@ -251,6 +251,12 @@ def update_hotel_settings(request, slug=None):
         hotel_name = data.get('name') or target_slug.replace('-', ' ').title()
         hotel = Hotel.objects.create(slug=target_slug, name=hotel_name)
 
+    def clean_val(val):
+        if isinstance(val, str):
+            c = re.sub(r'[@#$%^*~`+=<>]+', '', val)
+            return re.sub(r'\s+', ' ', c).strip()
+        return val
+
     profile_fields = [
         'name', 'tagline', 'description', 'phone', 'email', 'whatsapp',
         'address', 'city', 'state', 'pincode', 'check_in_time', 'check_out_time',
@@ -261,7 +267,7 @@ def update_hotel_settings(request, slug=None):
     ]
     for field in profile_fields:
         if field in data and data[field] is not None:
-            setattr(hotel, field, data[field])
+            setattr(hotel, field, clean_val(data[field]))
     
     # Handle reviews mapping compatibility
     if 'reviews_data' in data and data['reviews_data'] is not None:
@@ -272,7 +278,7 @@ def update_hotel_settings(request, slug=None):
         current_settings.update(data['booking_engine_settings'])
         hotel.booking_engine_settings = current_settings
         if 'page_title' in data['booking_engine_settings']:
-            hotel.page_title = data['booking_engine_settings']['page_title']
+            hotel.page_title = clean_val(data['booking_engine_settings']['page_title'])
         if 'theme_color' in data['booking_engine_settings']:
             hotel.theme_color = data['booking_engine_settings']['theme_color']
 
@@ -280,7 +286,7 @@ def update_hotel_settings(request, slug=None):
 
     # Sync back to PMS Property model as well
     try:
-        from apps.core.tenants.models import Property as PmsProperty, Tenant
+        from apps.core.tenants.models import Property as PmsProperty
         pms_prop = PmsProperty.objects.filter(booking_engine_settings__slug=target_slug).first()
         if not pms_prop:
             for p in PmsProperty.objects.all():
@@ -294,33 +300,15 @@ def update_hotel_settings(request, slug=None):
                 settings_dict.update(data['booking_engine_settings'])
             settings_dict['slug'] = target_slug
             pms_prop.booking_engine_settings = settings_dict
-            if 'name' in data and data['name']: pms_prop.name = data['name']
-            if 'address' in data and data['address']: pms_prop.address_line_1 = data['address']
-            if 'city' in data and data['city']: pms_prop.city = data['city']
-            if 'state' in data and data['state']: pms_prop.state = data['state']
-            if 'phone' in data and data['phone']: pms_prop.contact_phone = data['phone']
-            if 'email' in data and data['email']: pms_prop.contact_email = data['email']
+            if 'name' in data and data['name']: pms_prop.name = clean_val(data['name'])
+            if 'address' in data and data['address']: pms_prop.address_line_1 = clean_val(data['address'])
+            if 'city' in data and data['city']: pms_prop.city = clean_val(data['city'])
+            if 'state' in data and data['state']: pms_prop.state = clean_val(data['state'])
+            if 'phone' in data and data['phone']: pms_prop.contact_phone = clean_val(data['phone'])
+            if 'email' in data and data['email']: pms_prop.contact_email = clean_val(data['email'])
             if 'logo_url' in data and data['logo_url']: pms_prop.website_logo = data['logo_url']
             elif 'website_logo' in data and data['website_logo']: pms_prop.website_logo = data['website_logo']
             pms_prop.save()
-        else:
-            tenant_obj = Tenant.objects.first()
-            if not tenant_obj:
-                tenant_obj = Tenant.objects.create(name="Retrod Partner Hotels", subdomain="retrod-partners")
-            new_prop_settings = dict(data.get('booking_engine_settings') or {})
-            new_prop_settings['slug'] = target_slug
-            PmsProperty.objects.create(
-                tenant=tenant_obj,
-                name=hotel.name,
-                property_type="HOTEL",
-                city=hotel.city or "Bhubaneswar",
-                state=hotel.state or "Odisha",
-                country="India",
-                address_line_1=hotel.address or "",
-                contact_phone=hotel.phone or "",
-                contact_email=hotel.email or "",
-                booking_engine_settings=new_prop_settings
-            )
     except Exception as prop_sync_err:
         print(f"Notice: PMS Property auto-sync error: {prop_sync_err}")
 
@@ -463,9 +451,10 @@ def update_hotel_settings(request, slug=None):
         HotelAmenity.objects.filter(hotel=hotel).delete()
         for am_item in data['amenities']:
             am_name = am_item.get('name') if isinstance(am_item, dict) else str(am_item)
-            icon = am_item.get('icon_name', 'star') if isinstance(am_item, dict) else 'star'
-            if am_name:
-                am, _ = Amenity.objects.get_or_create(name=am_name, defaults={'icon_name': icon})
+            icon = (am_item.get('icon_name') or am_item.get('icon') or 'sparkles') if isinstance(am_item, dict) else 'sparkles'
+            enabled = am_item.get('enabled', True) if isinstance(am_item, dict) else True
+            if am_name and str(am_name).strip() and enabled is not False:
+                am, _ = Amenity.objects.get_or_create(name=str(am_name).strip(), defaults={'icon_name': icon})
                 HotelAmenity.objects.create(hotel=hotel, amenity=am)
 
     if 'addons' in data and isinstance(data['addons'], list):
@@ -821,6 +810,10 @@ def process_booking_creation(data):
 @permission_classes([AllowAny])
 def create_booking(request):
     if request.method == 'GET':
+        query = request.GET.get('query') or request.GET.get('email') or request.GET.get('ref') or request.GET.get('q')
+        if query:
+            return get_booking_detail(request, ref=query)
+
         hotel_slug = request.GET.get('hotel_slug') or request.GET.get('slug')
         qs = Booking.objects.all().select_related('hotel', 'room_type', 'rate_plan', 'guest').order_by('-created_at')
         if hotel_slug:
@@ -829,6 +822,7 @@ def create_booking(request):
         return Response({'success': True, 'bookings': serializer.data, 'count': qs.count()})
 
     return process_booking_creation(request.data)
+
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -892,6 +886,7 @@ def create_razorpay_order_view(request):
         'receipt': receipt_id
     })
 
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def verify_razorpay_payment_view(request):
@@ -911,6 +906,7 @@ def verify_razorpay_payment_view(request):
             print(f"[RAZORPAY VERIFICATION WARNING] Signature check failed for {razorpay_payment_id}. Proceeding in test mode.")
 
     return process_booking_creation(data)
+
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -990,49 +986,59 @@ def send_invoice_notification_view(request):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def get_booking_detail(request, ref=None):
-    query_str = (ref or request.GET.get('query') or request.GET.get('email') or '').strip()
+    raw_query = ref or request.GET.get('query') or request.GET.get('email') or request.GET.get('ref') or request.GET.get('q') or ''
+    query_str = urllib.parse.unquote(str(raw_query)).strip().strip('"').strip("'")
     if not query_str:
-        return Response({'success': False, 'error': 'Please provide an email ID or booking reference.'}, status=400)
+        return Response({'success': False, 'error': 'Please provide an email ID, booking reference, or mobile number.'}, status=400)
 
     today = datetime.now().date()
+    clean_phone = re.sub(r'[^0-9]', '', query_str)
 
-    if '@' in query_str:
-        # Email ID Lookup
-        bookings = Booking.objects.filter(guest__email__iexact=query_str).order_by('-check_in')
-        
-        upcoming = []
-        past = []
+    q_filter = models.Q(guest__email__iexact=query_str) | \
+               models.Q(guest__email__icontains=query_str) | \
+               models.Q(booking_reference__iexact=query_str) | \
+               models.Q(booking_reference__icontains=query_str)
 
-        for b in bookings:
-            data = BookingSerializer(b).data
-            if b.check_in >= today:
-                upcoming.append(data)
-            else:
-                past.append(data)
+    if clean_phone and len(clean_phone) >= 4:
+        q_filter |= models.Q(guest__phone__icontains=clean_phone)
 
+    bookings = Booking.objects.filter(q_filter).select_related('hotel', 'room_type', 'rate_plan', 'guest').order_by('-created_at')
+
+    if not bookings.exists() and len(query_str) >= 2:
+        bookings = Booking.objects.filter(guest__full_name__icontains=query_str).select_related('hotel', 'room_type', 'rate_plan', 'guest').order_by('-created_at')
+
+    if not bookings.exists():
         return Response({
             'success': True,
             'query': query_str,
-            'total_count': len(bookings),
-            'upcoming_bookings': upcoming,
-            'past_bookings': past
+            'total_count': 0,
+            'upcoming_bookings': [],
+            'past_bookings': [],
+            'bookings': [],
+            'message': f'No booking record found for "{query_str}".'
         })
-    else:
-        # Reference Code Lookup
-        try:
-            booking = Booking.objects.get(booking_reference=query_str.upper())
-            data = BookingSerializer(booking).data
-            is_upcoming = booking.check_in >= today
-            return Response({
-                'success': True,
-                'query': query_str,
-                'total_count': 1,
-                'booking': data,
-                'upcoming_bookings': [data] if is_upcoming else [],
-                'past_bookings': [] if is_upcoming else [data]
-            })
-        except Booking.DoesNotExist:
-            return Response({'success': False, 'error': f'No booking found for reference {query_str}'}, status=404)
+
+    serialized_list = []
+    upcoming = []
+    past = []
+
+    for b in bookings:
+        data = BookingSerializer(b).data
+        serialized_list.append(data)
+        if b.check_out >= today or b.check_in >= today:
+            upcoming.append(data)
+        else:
+            past.append(data)
+
+    return Response({
+        'success': True,
+        'query': query_str,
+        'total_count': len(bookings),
+        'upcoming_bookings': upcoming,
+        'past_bookings': past,
+        'bookings': serialized_list,
+        'booking': serialized_list[0] if serialized_list else None
+    })
 
 
 @api_view(['POST'])

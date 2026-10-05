@@ -32,12 +32,21 @@ class TenantViewSet(viewsets.ModelViewSet):
             pass
 
 
+def sanitize_text_value(val):
+    if not val or not isinstance(val, str):
+        return val
+    # Remove junk special symbols like @, #, $, %, ^, *, ~, etc. (keeping standard punctuation like . , - ' & /)
+    cleaned = re.sub(r'[@#$%^*~`+=<>]+', '', val)
+    return re.sub(r'\s+', ' ', cleaned).strip()
+
+
 class SuperadminPropertyViewSet(viewsets.ModelViewSet):
     """
     Super-Admin and Booking Engine CRUD endpoint for managing Properties across all tenants.
     """
     queryset = Property.objects.all()
     serializer_class = SuperadminPropertySerializer
+    pagination_class = None
 
     def get_permissions(self):
         # Allow read operations (list/retrieve) for all requests including booking engine and PMS dashboards
@@ -47,31 +56,62 @@ class SuperadminPropertyViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        query_params = getattr(self.request, 'query_params', getattr(self.request, 'GET', {}))
+        headers = getattr(self.request, 'headers', {})
 
-        # 1. Unauthenticated requests (e.g. guest booking engine looking up property data)
+        # 1. Unauthenticated requests (e.g. guest booking engine looking up property data by slug)
         if not user or not user.is_authenticated:
-            slug_param = self.request.query_params.get('slug')
+            slug_param = query_params.get('slug')
             if slug_param:
                 return Property.objects.filter(booking_engine_settings__slug=slug_param).order_by('-created_at')
-            return Property.objects.all().order_by('-created_at')
+            # Never leak all properties to unauthenticated callers
+            return Property.objects.none()
 
         # 2. Retrod Super Admin: can see all properties across all tenants
         is_super = (
             user.is_superuser or
-            (getattr(user, 'is_staff', False) and user.is_superuser) or
             (getattr(user, 'role', None) and getattr(user.role, 'code', None) in ['super_admin', 'retrod_admin']) or
-            (getattr(user, 'role', None) and getattr(user.role, 'name', None) in ['Super Admin', 'Retrod Super Admin'])
+            (getattr(user, 'role', None) and getattr(user.role, 'name', None) in ['Super Admin', 'Retrod Super Admin']) or
+            (getattr(user, 'email', '') and str(user.email).lower().endswith('@retrod.in'))
         )
         if is_super:
-            tenant_param = self.request.query_params.get('tenant') or self.request.headers.get('X-Tenant-ID')
+            tenant_param = query_params.get('tenant') or headers.get('X-Tenant-ID')
             if tenant_param:
                 return Property.objects.filter(tenant_id=tenant_param).order_by('-created_at')
             return Property.objects.all().order_by('-created_at')
 
-        # 3. Tenant / Hotelier wise: strictly isolated to their own tenant's created properties
+        # 3. Tenant / Hotelier wise: strictly isolated to their own tenant's properties
         tenant = getattr(user, 'tenant', None) or getattr(self.request, 'tenant', None)
+        
+        # Check UserAssignment or UserPropertyRole if tenant wasn't directly on user object
+        if not tenant:
+            from apps.core.accounts.models import UserAssignment
+            ua = UserAssignment.objects.filter(user=user).first()
+            if ua and ua.tenant:
+                tenant = ua.tenant
+
+        if not tenant:
+            from apps.core.rbac.models import UserPropertyRole
+            upr = UserPropertyRole.objects.filter(user=user).first()
+            if upr and upr.tenant:
+                tenant = upr.tenant
+
         if tenant:
             return Property.objects.filter(tenant=tenant).order_by('-created_at')
+
+        # Fallback to any properties assigned directly to this user
+        from apps.core.accounts.models import UserAssignment
+        from apps.core.rbac.models import UserPropertyRole
+        assigned_prop_ids = set()
+        for ua in UserAssignment.objects.filter(user=user):
+            if ua.property_id:
+                assigned_prop_ids.add(ua.property_id)
+        for upr in UserPropertyRole.objects.filter(user=user):
+            if upr.property_id:
+                assigned_prop_ids.add(upr.property_id)
+
+        if assigned_prop_ids:
+            return Property.objects.filter(id__in=assigned_prop_ids).order_by('-created_at')
 
         return Property.objects.none()
 
@@ -136,6 +176,37 @@ class SuperadminPropertyViewSet(viewsets.ModelViewSet):
             except Exception:
                 pass
 
+        # Sanitize text fields
+        for field in ['name', 'address_line_1', 'city', 'state', 'postal_code', 'description']:
+            if field in serializer.validated_data and isinstance(serializer.validated_data[field], str):
+                serializer.validated_data[field] = sanitize_text_value(serializer.validated_data[field])
+
+        hotel_name = serializer.validated_data.get('name', '').strip()
+        slug = (serializer.validated_data.get('booking_engine_settings') or {}).get('slug')
+
+        # Strictly enforce: A hotel can only be onboarded / created 1 time per tenant
+        existing_prop = None
+        if hotel_name:
+            existing_prop = Property.objects.filter(tenant=tenant, name__iexact=hotel_name).first()
+        if not existing_prop and slug and slug not in ['hotel', 'resort', 'stay', 'demo']:
+            existing_prop = Property.objects.filter(tenant=tenant, booking_engine_settings__slug=slug).first()
+
+        if existing_prop:
+            # Update existing property instead of creating a duplicate row
+            for attr, val in serializer.validated_data.items():
+                if attr not in ['id', 'created_at', 'tenant', 'created_by']:
+                    setattr(existing_prop, attr, val)
+            if user:
+                existing_prop.updated_by = user
+            existing_prop.save()
+            serializer.instance = existing_prop
+            try:
+                from apps.booking.sync import sync_pms_property_to_booking_engine
+                sync_pms_property_to_booking_engine(existing_prop)
+            except Exception:
+                pass
+            return
+
         prop = serializer.save(created_by=user, tenant=tenant)
 
         # Automatically assign the creator to the new property
@@ -168,6 +239,11 @@ class SuperadminPropertyViewSet(viewsets.ModelViewSet):
             logging.getLogger(__name__).error(f"Failed to auto-provision tenant products: {e}")
 
     def perform_update(self, serializer):
+        # Sanitize text fields on update
+        for field in ['name', 'address_line_1', 'city', 'state', 'postal_code', 'description']:
+            if field in serializer.validated_data and isinstance(serializer.validated_data[field], str):
+                serializer.validated_data[field] = sanitize_text_value(serializer.validated_data[field])
+
         prop = serializer.save(
             updated_by=self.request.user if self.request.user.is_authenticated else None
         )
@@ -238,47 +314,39 @@ class PropertyViewSet(RedisCacheMixin, viewsets.ModelViewSet):
     """
     cache_timeout = 300  # 5 minutes
     serializer_class = PropertySerializer
+    pagination_class = None
     
     def get_queryset(self):
         user = self.request.user
-        tenant = getattr(user, 'tenant', None) or getattr(self.request, 'tenant', None)
-        if not tenant:
-            return Property.objects.none()
-        
-        if not user or not user.is_authenticated:
-            return Property.objects.filter(tenant=tenant)
+        query_params = getattr(self.request, 'query_params', getattr(self.request, 'GET', {}))
+        headers = getattr(self.request, 'headers', {})
 
         # Superuser bypass: allow viewing specific tenant or all if explicitly requested
-        if user.is_superuser:
-            tenant_param = self.request.query_params.get('tenant') or self.request.headers.get('X-Tenant-ID')
+        if user and user.is_authenticated and user.is_superuser:
+            tenant_param = query_params.get('tenant') or headers.get('X-Tenant-ID')
             if tenant_param:
-                return Property.objects.filter(tenant_id=tenant_param)
-            return Property.objects.filter(tenant=tenant)
+                return Property.objects.filter(tenant_id=tenant_param).order_by('-created_at')
+            return Property.objects.all().order_by('-created_at')
 
-        # Tenant Owner / Director / Admin - strictly isolated to their own tenant
-        is_owner = (
-            user.is_staff or
-            (user.role and user.role.code in ['owner', 'tenant_owner', 'admin', 'super_admin'])
-        )
-        if is_owner:
-            return Property.objects.filter(tenant=tenant)
+        tenant = getattr(user, 'tenant', None) or getattr(self.request, 'tenant', None)
+        
+        # Check UserAssignment or UserPropertyRole if tenant wasn't directly on user object
+        if not tenant and user and user.is_authenticated:
+            from apps.core.accounts.models import UserAssignment
+            ua = UserAssignment.objects.filter(user=user).first()
+            if ua and ua.tenant:
+                tenant = ua.tenant
 
-        # Filter assigned properties for staff users within their tenant
-        from apps.core.accounts.models import UserAssignment
-        from apps.core.rbac.models import UserPropertyRole
+        if not tenant and user and user.is_authenticated:
+            from apps.core.rbac.models import UserPropertyRole
+            upr = UserPropertyRole.objects.filter(user=user).first()
+            if upr and upr.tenant:
+                tenant = upr.tenant
 
-        assigned_ids = set()
-        for ua in UserAssignment.objects.filter(user=user, tenant=tenant):
-            if ua.property_id:
-                assigned_ids.add(ua.property_id)
-        for upr in UserPropertyRole.objects.filter(user=user, tenant=tenant):
-            if upr.property_id:
-                assigned_ids.add(upr.property_id)
+        if tenant:
+            return Property.objects.filter(tenant=tenant).order_by('-created_at')
 
-        if assigned_ids:
-            return Property.objects.filter(tenant=tenant, id__in=assigned_ids)
-
-        return Property.objects.filter(tenant=tenant)
+        return Property.objects.none()
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, 'tenant', None)
