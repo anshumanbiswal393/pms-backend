@@ -160,14 +160,31 @@ class SuperadminPropertySerializer(serializers.ModelSerializer):
         if isinstance(data, dict):
             data = data.copy()
             t_val = data.get('tenant')
-            if not t_val or t_val in ('undefined', 'null', ''):
+            if not t_val or str(t_val).strip() in ('undefined', 'null', '', 'None'):
                 data['tenant'] = None
-            elif isinstance(t_val, str) and not Tenant.objects.filter(id=t_val).exists():
-                data['tenant'] = None
+            else:
+                try:
+                    import uuid
+                    uuid.UUID(str(t_val))
+                    if not Tenant.objects.filter(id=t_val).exists():
+                        data['tenant'] = None
+                except Exception:
+                    data['tenant'] = None
 
             s_date = data.get('subscription_end_date')
-            if not s_date or s_date in ('undefined', 'null', ''):
+            if not s_date or str(s_date).strip() in ('undefined', 'null', '', 'None'):
                 data['subscription_end_date'] = None
+            else:
+                s_str = str(s_date).strip()
+                import re
+                if re.match(r'^\d{1,2}[-/]\d{1,2}[-/]\d{4}$', s_str):
+                    try:
+                        sep = '/' if '/' in s_str else '-'
+                        d_parts = s_str.split(sep)
+                        if len(d_parts) == 3:
+                            data['subscription_end_date'] = f"{d_parts[2]}-{int(d_parts[1]):02d}-{int(d_parts[0]):02d}"
+                    except Exception:
+                        pass
 
             p_type = data.get('property_type')
             if p_type:

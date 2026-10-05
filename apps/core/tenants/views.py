@@ -1,3 +1,7 @@
+import re
+import os
+import uuid
+import json
 from rest_framework import viewsets, permissions, status
 from apps.core.common.mixins import RedisCacheMixin
 from apps.core.tenants.models import (
@@ -49,8 +53,8 @@ class SuperadminPropertyViewSet(viewsets.ModelViewSet):
     pagination_class = None
 
     def get_permissions(self):
-        # Allow read operations (list/retrieve) for all requests including booking engine and PMS dashboards
-        if self.action in ['list', 'retrieve']:
+        # Allow read, write and helper operations for booking engine and PMS dashboards
+        if self.action in ['list', 'retrieve', 'upload_image', 'fetch_url_data', 'create', 'update', 'partial_update']:
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
 
@@ -63,7 +67,13 @@ class SuperadminPropertyViewSet(viewsets.ModelViewSet):
         if not user or not user.is_authenticated:
             slug_param = query_params.get('slug')
             if slug_param:
-                return Property.objects.filter(booking_engine_settings__slug=slug_param).order_by('-created_at')
+                from django.db.models import Q
+                return Property.objects.filter(
+                    Q(booking_engine_settings__slug__iexact=slug_param) |
+                    Q(booking_engine_settings__slug=slug_param) |
+                    Q(name__iexact=slug_param) |
+                    Q(id__iexact=slug_param)
+                ).order_by('-created_at')
             # Never leak all properties to unauthenticated callers
             return Property.objects.none()
 
@@ -233,7 +243,8 @@ class SuperadminPropertyViewSet(viewsets.ModelViewSet):
             logging.getLogger(__name__).error(f"Failed to sync property to booking engine on create: {e}")
         try:
             from apps.core.subscriptions.services import ProductAccessService
-            ProductAccessService.provision_tenant_products(prop, created_by=user)
+            if prop.tenant:
+                ProductAccessService.provision_tenant_products(prop.tenant, created_by=user)
         except Exception as e:
             import logging
             logging.getLogger(__name__).error(f"Failed to auto-provision tenant products: {e}")

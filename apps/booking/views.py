@@ -88,8 +88,9 @@ def fetch_pms_property_by_slug(slug_lower):
         if not slug_raw:
             return None
 
-        # Pass 1: Try direct match on name or ID first (single indexed DB query)
+        # Pass 1: Direct indexed lookup
         exact_match = PmsProperty.objects.filter(
+            models.Q(booking_engine_settings__slug__iexact=slug_raw) |
             models.Q(name__iexact=slug_raw) |
             models.Q(id__iexact=slug_raw)
         ).first()
@@ -97,62 +98,25 @@ def fetch_pms_property_by_slug(slug_lower):
             return exact_match
 
         slug_clean = re.sub(r'[^a-z0-9]', '', slug_raw)
-        # Strip prefixes/suffixes like 'hotel-', 'resort-', etc.
         slug_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', slug_raw)
         slug_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', slug_core).strip()
-        slug_core_clean = re.sub(r'[^a-z0-9]', '', slug_core)
 
-        all_props = list(PmsProperty.objects.all().only('id', 'name', 'booking_engine_settings'))
-        if not all_props:
-            return None
+        # Pass 2: Fast filtered query
+        if slug_core and len(slug_core) >= 3:
+            core_match = PmsProperty.objects.filter(
+                models.Q(name__icontains=slug_core) |
+                models.Q(booking_engine_settings__slug__icontains=slug_core)
+            ).first()
+            if core_match:
+                return core_match
 
-        # Pass 2: Exact matches on slug, name, ID, or hotel_id
-        for prop in all_props:
-            prop_settings = prop.booking_engine_settings or {}
-            p_slug = str(prop_settings.get('slug') or getattr(prop, 'slug', '') or prop.name.lower().replace(' ', '-')).strip().lower()
-            p_name = str(prop.name).strip().lower()
-            p_id = str(prop.id).lower()
-            p_hotel_id = str(getattr(prop, 'hotel_id', '') or '').lower()
-
-            if slug_raw in (p_slug, p_name, p_id, p_hotel_id):
-                return prop
-
-        # Pass 3: Clean alphanumeric exact match
-        if slug_clean:
-            for prop in all_props:
-                prop_settings = prop.booking_engine_settings or {}
-                p_slug = str(prop_settings.get('slug') or getattr(prop, 'slug', '') or prop.name.lower().replace(' ', '-')).strip().lower()
-                p_name = str(prop.name).strip().lower()
-                pslug_clean = re.sub(r'[^a-z0-9]', '', p_slug)
-                pname_clean = re.sub(r'[^a-z0-9]', '', p_name)
-
-                if slug_clean in (pslug_clean, pname_clean):
-                    return prop
-
-        # Pass 4: Core stripped prefix/suffix match (e.g. "hotel-xyz" vs "xyz" or "xyz-hotel")
-        if slug_core_clean:
-            for prop in all_props:
-                prop_settings = prop.booking_engine_settings or {}
-                p_slug = str(prop_settings.get('slug') or getattr(prop, 'slug', '') or prop.name.lower().replace(' ', '-')).strip().lower()
-                p_name = str(prop.name).strip().lower()
-                p_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', p_slug)
-                p_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', p_core).strip()
-                p_core_clean = re.sub(r'[^a-z0-9]', '', p_core)
-
-                p_name_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)\s*', '', p_name)
-                p_name_core = re.sub(r'\s*(hotel|resort|stay|villa|property|pms|demo)$', '', p_name_core).strip()
-                p_name_core_clean = re.sub(r'[^a-z0-9]', '', p_name_core)
-
-                if slug_core_clean in (p_core_clean, p_name_core_clean) or slug_clean in (p_core_clean, p_name_core_clean):
-                    return prop
-
-        # Pass 5: Substring containment for multi-word property names (min 3 chars)
-        if len(slug_clean) >= 3:
-            for prop in all_props:
-                p_name = str(prop.name).strip().lower()
-                pname_clean = re.sub(r'[^a-z0-9]', '', p_name)
-                if (slug_clean in pname_clean or pname_clean in slug_clean) and len(pname_clean) >= 3:
-                    return prop
+        if slug_clean and len(slug_clean) >= 3:
+            clean_match = PmsProperty.objects.filter(
+                models.Q(name__icontains=slug_clean) |
+                models.Q(booking_engine_settings__slug__icontains=slug_clean)
+            ).first()
+            if clean_match:
+                return clean_match
 
     except Exception as e:
         print(f"Notice: Native PMS property fetch error: {e}")
@@ -169,33 +133,40 @@ def get_or_create_hotel_tenant(slug, force_sync=False):
     if not slug_raw:
         slug_raw = 'retrod'
 
-    # 1. If not forcing sync, check if Hotel already exists in apps.booking DB (instant DB query)
-    if not force_sync:
-        hotel = Hotel.objects.filter(slug__iexact=slug_raw).first()
-        if not hotel:
-            slug_clean = re.sub(r'[^a-z0-9]', '', slug_raw)
-            slug_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', slug_raw)
-            slug_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', slug_core).strip()
-            slug_core_clean = re.sub(r'[^a-z0-9]', '', slug_core)
+    # 1. Fast direct indexed lookup on Hotel with prefetch_related
+    hotel = Hotel.objects.prefetch_related(
+        'images',
+        'room_types',
+        'room_types__rate_plans',
+        'policies',
+        'promo_codes',
+        'addons',
+        'payment_gateways',
+        'nearby'
+    ).filter(slug__iexact=slug_raw).first()
 
-            for h in Hotel.objects.all():
-                h_slug_clean = re.sub(r'[^a-z0-9]', '', h.slug)
-                h_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', h.slug)
-                h_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', h_core).strip()
-                h_core_clean = re.sub(r'[^a-z0-9]', '', h_core)
+    if not hotel:
+        slug_clean = re.sub(r'[^a-z0-9]', '', slug_raw)
+        slug_core = re.sub(r'^(hotel|resort|stay|villa|property|pms|demo)[-_]?', '', slug_raw)
+        slug_core = re.sub(r'[-_]?(hotel|resort|stay|villa|property|pms|demo)$', '', slug_core).strip()
 
-                if slug_clean and slug_clean == h_slug_clean:
-                    hotel = h
-                    break
-                if slug_core_clean and (slug_core_clean == h_core_clean or slug_clean == h_core_clean or slug_core_clean == h_slug_clean):
-                    hotel = h
-                    break
-                if str(h.id).lower() == slug_raw:
-                    hotel = h
-                    break
+        hotel = Hotel.objects.prefetch_related(
+            'images',
+            'room_types',
+            'room_types__rate_plans',
+            'policies',
+            'promo_codes',
+            'addons',
+            'payment_gateways',
+            'nearby'
+        ).filter(
+            models.Q(slug__iexact=slug_clean) |
+            models.Q(slug__iexact=slug_core) |
+            models.Q(id__iexact=slug_raw)
+        ).first()
 
-        if hotel:
-            return hotel
+    if hotel and not force_sync:
+        return hotel
 
     # 2. Hotel not found in booking DB (or force_sync is True) -> fetch from PMS and sync
     prop = fetch_pms_property_by_slug(slug_raw)
@@ -209,8 +180,8 @@ def get_or_create_hotel_tenant(slug, force_sync=False):
         if first_p:
             return sync_pms_property_to_booking_engine(first_p)
 
-    # 4. If not found in PMS or Booking DB, return None (Strict Isolation - No Dummy Auto-Provisioning)
-    return None
+    # 4. Return hotel or None
+    return hotel or None
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -240,6 +211,29 @@ def hotel_detail(request, slug=None):
         pass
     return Response({'success': True, 'hotel': data})
 
+def save_base64_image_if_needed(val, hotel_slug='hotel', prefix='img'):
+    if not val or not isinstance(val, str):
+        return val
+    if val.startswith('data:image'):
+        try:
+            import base64, uuid, os
+            from django.conf import settings
+            parts = val.split(';base64,')
+            if len(parts) == 2:
+                header, data = parts
+                ext = header.split('/')[-1].split('+')[0]
+                if ext == 'jpeg': ext = 'jpg'
+                media_dir = os.path.join(settings.MEDIA_ROOT, 'hotels', hotel_slug)
+                os.makedirs(media_dir, exist_ok=True)
+                filename = f"{prefix}_{uuid.uuid4().hex[:8]}.{ext}"
+                filepath = os.path.join(media_dir, filename)
+                with open(filepath, 'wb') as f:
+                    f.write(base64.b64decode(data))
+                return f"{settings.MEDIA_URL}hotels/{hotel_slug}/{filename}"
+        except Exception as e:
+            print(f"Base64 save notice: {e}")
+    return val
+
 @api_view(['POST', 'PUT'])
 @permission_classes([AllowAny])
 def update_hotel_settings(request, slug=None):
@@ -253,6 +247,8 @@ def update_hotel_settings(request, slug=None):
 
     def clean_val(val):
         if isinstance(val, str):
+            if val.startswith('data:image'):
+                return val
             c = re.sub(r'[@#$%^*~`+=<>]+', '', val)
             return re.sub(r'\s+', ' ', c).strip()
         return val
@@ -269,18 +265,51 @@ def update_hotel_settings(request, slug=None):
         if field in data and data[field] is not None:
             setattr(hotel, field, clean_val(data[field]))
     
+    if 'website_logo' in data and data['website_logo']:
+        hotel.logo_url = clean_val(data['website_logo'])
+    elif 'logo_url' in data and data['logo_url']:
+        hotel.logo_url = clean_val(data['logo_url'])
+
+    if hotel.logo_url:
+        hotel.logo_url = save_base64_image_if_needed(hotel.logo_url, target_slug, 'logo')
+    if hotel.hero_banner_url:
+        hotel.hero_banner_url = save_base64_image_if_needed(hotel.hero_banner_url, target_slug, 'hero')
+
     # Handle reviews mapping compatibility
     if 'reviews_data' in data and data['reviews_data'] is not None:
         hotel.google_reviews_data = data['reviews_data']
     
+    current_settings = hotel.booking_engine_settings or {}
     if 'booking_engine_settings' in data and isinstance(data['booking_engine_settings'], dict):
-        current_settings = hotel.booking_engine_settings or {}
         current_settings.update(data['booking_engine_settings'])
-        hotel.booking_engine_settings = current_settings
-        if 'page_title' in data['booking_engine_settings']:
-            hotel.page_title = clean_val(data['booking_engine_settings']['page_title'])
-        if 'theme_color' in data['booking_engine_settings']:
-            hotel.theme_color = data['booking_engine_settings']['theme_color']
+    
+    # Direct field synchronization to booking_engine_settings dictionary
+    for field_key in [
+        'page_title', 'theme_color', 'what_makes_special', 'backstory', 'tagline',
+        'about_description', 'events_and_banquets', 'banquets', 'enable_event_booking',
+        'addons', 'promos', 'policies', 'rates_matrix', 'images', 'hero_slides',
+        'google_reviews', 'google_reviews_data', 'reviews_data', 'google_rating',
+        'google_review_count', 'enable_google_reviews', 'logo_url', 'website_logo',
+        'custom_room_types', 'room_types', 'payment_gateways', 'gateways',
+        'terms_and_conditions', 'privacy_policy', 'google_reviews_widget_id',
+        'elfsight_widget_id', 'google_reviews_embed_code', 'google_place_id',
+        'google_business_link', 'google_api_key', 'google_editorial_summary'
+    ]:
+        if field_key in data and data[field_key] is not None:
+            current_settings[field_key] = data[field_key]
+
+    if 'logo_url' in data and data['logo_url']:
+        current_settings['logo_url'] = hotel.logo_url or clean_val(data['logo_url'])
+        current_settings['website_logo'] = current_settings['logo_url']
+    elif 'website_logo' in data and data['website_logo']:
+        current_settings['website_logo'] = hotel.logo_url or clean_val(data['website_logo'])
+        current_settings['logo_url'] = current_settings['website_logo']
+
+    hotel.booking_engine_settings = current_settings
+    if 'page_title' in current_settings:
+        hotel.page_title = clean_val(current_settings['page_title'])
+    if 'theme_color' in current_settings:
+        hotel.theme_color = current_settings['theme_color']
 
     hotel.save()
 
@@ -298,6 +327,7 @@ def update_hotel_settings(request, slug=None):
             settings_dict = pms_prop.booking_engine_settings or {}
             if 'booking_engine_settings' in data and isinstance(data['booking_engine_settings'], dict):
                 settings_dict.update(data['booking_engine_settings'])
+            settings_dict.update(current_settings)
             settings_dict['slug'] = target_slug
             pms_prop.booking_engine_settings = settings_dict
             if 'name' in data and data['name']: pms_prop.name = clean_val(data['name'])

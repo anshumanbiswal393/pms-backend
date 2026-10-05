@@ -90,23 +90,19 @@ class HotelSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def get_gallery_images(self, obj):
-        return [{'url': img.image_url, 'image_url': img.image_url, 'caption': img.caption} for img in obj.images.filter(category='gallery')]
+        return [{'url': img.image_url, 'image_url': img.image_url, 'caption': img.caption} for img in obj.images.all() if getattr(img, 'category', 'gallery') == 'gallery']
 
     def get_room_types(self, obj):
         request = self.context.get('request')
-        if request and request.GET.get('include_inactive') == 'true':
-            qs = obj.room_types.all()
-        else:
-            qs = obj.room_types.filter(is_active=True)
+        include_inactive = request and request.GET.get('include_inactive') == 'true'
+        all_rooms = list(obj.room_types.all())
+        qs = all_rooms if include_inactive else [r for r in all_rooms if r.is_active]
         return RoomTypeSerializer(qs, many=True).data
 
     def get_rooms(self, obj):
         return self.get_room_types(obj)
 
     def get_amenities(self, obj):
-        amenities = Amenity.objects.filter(hotelamenity__hotel=obj)
-        if amenities.exists():
-            return AmenitySerializer(amenities, many=True).data
         settings = obj.booking_engine_settings or {}
         pms_amenities = settings.get('amenities') or []
         if pms_amenities and isinstance(pms_amenities, list):
@@ -119,11 +115,15 @@ class HotelSerializer(serializers.ModelSerializer):
                         res.append({'id': idx + 1, 'name': a.get('name', ''), 'icon_name': a.get('icon_name') or a.get('icon') or 'sparkles'})
                 elif a and str(a).strip():
                     res.append({'id': idx + 1, 'name': str(a).strip(), 'icon_name': 'sparkles'})
-            return res
-        return []
+            if res:
+                return res
+        try:
+            return [{'id': idx + 1, 'name': ha.amenity.name, 'icon_name': ha.amenity.icon_name} for idx, ha in enumerate(obj.hotelamenity_set.all())]
+        except Exception:
+            return []
 
     def get_promos(self, obj):
-        return PromoCodeSerializer(obj.promo_codes.all(), many=True).data
+        return PromoCodeSerializer(list(obj.promo_codes.all()), many=True).data
 
     def get_banquets(self, obj):
         settings = obj.booking_engine_settings or {}
@@ -160,6 +160,9 @@ class HotelSerializer(serializers.ModelSerializer):
             if data.get('total_reviews') in [0, '0', None]:
                 data['total_reviews'] = 148
         settings = instance.booking_engine_settings or {}
+        resolved_logo = instance.logo_url or settings.get('logo_url') or settings.get('website_logo') or ''
+        data['logo_url'] = resolved_logo
+        data['website_logo'] = resolved_logo
         if 'enable_google_reviews' in settings:
             data['enable_google_reviews'] = bool(settings['enable_google_reviews'])
         else:
