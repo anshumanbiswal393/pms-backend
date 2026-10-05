@@ -335,7 +335,14 @@ def update_hotel_settings(request, slug=None):
             if 'city' in data and data['city']: pms_prop.city = clean_val(data['city'])
             if 'state' in data and data['state']: pms_prop.state = clean_val(data['state'])
             if 'phone' in data and data['phone']: pms_prop.contact_phone = clean_val(data['phone'])
-            if 'email' in data and data['email']: pms_prop.contact_email = clean_val(data['email'])
+            if 'check_in_time' in data and data['check_in_time']:
+                pms_prop.check_in_time = clean_val(data['check_in_time'])
+            elif 'check_in_time' in current_settings and current_settings['check_in_time']:
+                pms_prop.check_in_time = clean_val(current_settings['check_in_time'])
+            if 'check_out_time' in data and data['check_out_time']:
+                pms_prop.check_out_time = clean_val(data['check_out_time'])
+            elif 'check_out_time' in current_settings and current_settings['check_out_time']:
+                pms_prop.check_out_time = clean_val(current_settings['check_out_time'])
             if 'logo_url' in data and data['logo_url']: pms_prop.website_logo = data['logo_url']
             elif 'website_logo' in data and data['website_logo']: pms_prop.website_logo = data['website_logo']
             pms_prop.save()

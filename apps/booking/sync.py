@@ -7,6 +7,18 @@ def parse_time_string(raw: str) -> str:
     if not raw:
         return ""
     raw = str(raw).strip()
+    if re.search(r'(am|pm)', raw, re.IGNORECASE):
+        return raw
+    m = re.match(r'^(\d{1,2}):(\d{2})(?::\d{2})?$', raw)
+    if m:
+        try:
+            h = int(m.group(1))
+            minute = m.group(2)
+            am_pm = 'AM' if h < 12 else 'PM'
+            h12 = h % 12 or 12
+            return f"{h12:02d}:{minute} {am_pm}"
+        except Exception:
+            pass
     if ':' not in raw and '.' in raw:
         try:
             h = int(float(raw))
@@ -112,8 +124,10 @@ def sync_pms_property_to_booking_engine(prop_or_dict):
     hotel.email = pms_p.get('contact_email') or settings.get('email') or ''
     hotel.whatsapp = settings.get('whatsapp') or pms_p.get('contact_phone') or settings.get('phone') or ''
 
-    pms_checkin = parse_time_string(pms_p.get('check_in_time') or settings.get('check_in_time'))
-    pms_checkout = parse_time_string(pms_p.get('check_out_time') or settings.get('check_out_time'))
+    raw_ci = settings.get('check_in_time') or pms_p.get('check_in_time')
+    raw_co = settings.get('check_out_time') or pms_p.get('check_out_time')
+    pms_checkin = parse_time_string(raw_ci)
+    pms_checkout = parse_time_string(raw_co)
     hotel.check_in_time = pms_checkin or '12:00 PM'
     hotel.check_out_time = pms_checkout or '11:00 AM'
 
