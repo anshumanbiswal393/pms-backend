@@ -159,17 +159,27 @@ class SuperadminPropertySerializer(serializers.ModelSerializer):
     def to_internal_value(self, data):
         if isinstance(data, dict):
             data = data.copy()
-            t_val = data.get('tenant')
-            if not t_val or str(t_val).strip() in ('undefined', 'null', '', 'None'):
-                data['tenant'] = None
-            else:
-                try:
-                    import uuid
-                    uuid.UUID(str(t_val))
-                    if not Tenant.objects.filter(id=t_val).exists():
+            if 'tenant' in data:
+                t_val = data.get('tenant')
+                if not t_val or str(t_val).strip() in ('undefined', 'null', '', 'None'):
+                    if self.instance and getattr(self.instance, 'tenant_id', None):
+                        data.pop('tenant', None)
+                    else:
                         data['tenant'] = None
-                except Exception:
-                    data['tenant'] = None
+                else:
+                    try:
+                        import uuid
+                        uuid.UUID(str(t_val))
+                        if not Tenant.objects.filter(id=t_val).exists():
+                            if self.instance and getattr(self.instance, 'tenant_id', None):
+                                data.pop('tenant', None)
+                            else:
+                                data['tenant'] = None
+                    except Exception:
+                        if self.instance and getattr(self.instance, 'tenant_id', None):
+                            data.pop('tenant', None)
+                        else:
+                            data['tenant'] = None
 
             s_date = data.get('subscription_end_date')
             if not s_date or str(s_date).strip() in ('undefined', 'null', '', 'None'):
@@ -195,6 +205,11 @@ class SuperadminPropertySerializer(serializers.ModelSerializer):
                 else:
                     data['property_type'] = 'HOTEL'
         return super().to_internal_value(data)
+
+    def update(self, instance, validated_data):
+        if 'tenant' in validated_data and validated_data['tenant'] is None and instance.tenant_id:
+            validated_data.pop('tenant', None)
+        return super().update(instance, validated_data)
 
 
 

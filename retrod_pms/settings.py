@@ -121,7 +121,7 @@ import sys
 # Database configuration (psycopg2 for postgres, sqlite as local fallback)
 if env('DATABASE_URL'):
     db_config = env.db()
-    db_config['CONN_MAX_AGE'] = 60
+    db_config['CONN_MAX_AGE'] = 0
     db_config['CONN_HEALTH_CHECKS'] = True
     DATABASES = {
         'default': db_config

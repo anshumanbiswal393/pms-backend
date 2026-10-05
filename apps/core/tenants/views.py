@@ -281,8 +281,9 @@ class SuperadminPropertyViewSet(viewsets.ModelViewSet):
         media_dir = os.path.join(settings.MEDIA_ROOT, 'properties')
         os.makedirs(media_dir, exist_ok=True)
         
-        fs = FileSystemStorage(location=media_dir, base_url=settings.MEDIA_URL + 'properties/')
-        filename = fs.save(file_obj.name, file_obj)
+        ext = os.path.splitext(file_obj.name)[1].lower() or '.png'
+        safe_filename = f"{uuid.uuid4()}{ext}"
+        filename = fs.save(safe_filename, file_obj)
         file_url = request.build_absolute_uri(fs.url(filename))
         
         return Response({'image_url': file_url}, status=status.HTTP_201_CREATED)
