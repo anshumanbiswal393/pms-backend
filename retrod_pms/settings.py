@@ -74,6 +74,9 @@ INSTALLED_APPS = [
 
     # Booking Engine (Product 3)
     'apps.booking',
+
+    # Channel Manager (Product 4 - STAAH Su API)
+    'apps.features.channel_manager',
 ]
 
 

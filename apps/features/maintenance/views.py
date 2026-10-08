@@ -87,9 +87,7 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
         if unit:
             unit.operational_status = 'maintenance'
             unit.maintenance_status = 'active'
-            unit.status = 'BLOCKED'
-            unit.status_reason = ticket.title or ticket.description or 'Under Maintenance'
-            unit.save(update_fields=['operational_status', 'maintenance_status', 'status', 'status_reason', 'updated_at'])
+            unit.save(update_fields=['operational_status', 'maintenance_status', 'updated_at'])
 
     def perform_destroy(self, instance):
         unit = instance.inventory_unit
@@ -102,9 +100,7 @@ class MaintenanceTicketViewSet(viewsets.ModelViewSet):
             if not other_tickets.exists():
                 unit.operational_status = 'operational'
                 unit.maintenance_status = 'none'
-                unit.status = 'AVAILABLE'
-                unit.status_reason = None
-                unit.save(update_fields=['operational_status', 'maintenance_status', 'status', 'status_reason', 'updated_at'])
+                unit.save(update_fields=['operational_status', 'maintenance_status', 'updated_at'])
         instance.delete()
 
     @action(detail=False, methods=['get'])
@@ -235,8 +231,6 @@ class TicketCompleteView(APIView):
         if unit:
             unit.operational_status = 'operational'
             unit.maintenance_status = 'none'
-            unit.status = 'AVAILABLE'
-            unit.status_reason = None
-            unit.save(update_fields=['operational_status', 'maintenance_status', 'status', 'status_reason', 'updated_at'])
+            unit.save(update_fields=['operational_status', 'maintenance_status', 'updated_at'])
 
         return Response(MaintenanceTicketSerializer(ticket).data, status=status.HTTP_200_OK)

@@ -143,6 +143,10 @@ urlpatterns = [
 
     # Front Office & Night Audit Endpoints
     path('api/front-office/', include('apps.features.front_office.urls')),
+
+    # Channel Manager (STAAH Su API Integration)
+    path('api/channel-manager/', include('apps.features.channel_manager.urls')),
+    path('api/v1/channel-manager/', include('apps.features.channel_manager.urls')),
     path('api/night-audit/', include('apps.features.front_office.urls')),
 
     # Reservation Domain Endpoints
