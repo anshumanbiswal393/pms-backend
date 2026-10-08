@@ -177,6 +177,30 @@ class InventoryUnitSerializer(serializers.ModelSerializer):
             except ValidationError as e:
                 raise serializers.ValidationError(e.message)
 
+        # Prevent setting operational_status to maintenance if room has an active/confirmed guest reservation today
+        if self.instance and data.get('operational_status') == 'maintenance':
+            from apps.features.reservations.models import ReservationInventory
+            from django.utils import timezone
+            today = timezone.localdate() if hasattr(timezone, 'localdate') else timezone.now().date()
+            active_res = ReservationInventory.objects.filter(
+                tenant=tenant,
+                inventory_unit=self.instance,
+                check_in_date__lte=today,
+                check_out_date__gt=today,
+            ).exclude(
+                reservation__status__in=['CANCELLED', 'NO_SHOW']
+            ).exclude(
+                status__in=['CANCELLED', 'CHECKED_OUT']
+            )
+            if active_res.exists():
+                conflict = active_res.select_related('reservation', 'reservation__primary_guest').first()
+                res = conflict.reservation
+                guest_name = f"{res.primary_guest.first_name} {res.primary_guest.last_name}".strip() if res.primary_guest else "Guest"
+                conf_no = res.confirmation_number or res.booking_reference or "N/A"
+                raise serializers.ValidationError(
+                    f"Room {self.instance.name} cannot be set to Maintenance: it is currently occupied/reserved by {guest_name} ({conf_no})."
+                )
+
         return data
 
     def create(self, validated_data):
