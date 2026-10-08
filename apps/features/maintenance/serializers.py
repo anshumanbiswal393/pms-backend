@@ -99,6 +99,29 @@ class MaintenanceTicketSerializer(serializers.ModelSerializer):
         validated_data.pop('end_date', None)
         return super().update(instance, validated_data)
 
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        import re
+        desc = instance.description or ''
+        match = re.search(r'from\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})', desc)
+        if match:
+            ret['start_date'] = match.group(1)
+            ret['end_date'] = match.group(2)
+        elif instance.created_at:
+            from datetime import timedelta
+            ret['start_date'] = instance.created_at.date().isoformat()
+            ret['end_date'] = (instance.created_at.date() + timedelta(days=3)).isoformat()
+        else:
+            from django.utils import timezone
+            from datetime import timedelta
+            today = timezone.localdate() if hasattr(timezone, 'localdate') else timezone.now().date()
+            ret['start_date'] = today.isoformat()
+            ret['end_date'] = (today + timedelta(days=3)).isoformat()
+
+        if instance.inventory_unit:
+            ret['inventory_unit_name'] = instance.inventory_unit.name
+        return ret
+
 
 class MaintenanceScheduleSerializer(serializers.ModelSerializer):
     class Meta:
