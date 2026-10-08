@@ -87,23 +87,33 @@ class MaintenanceTicketSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        validated_data.pop('start_date', None)
-        validated_data.pop('end_date', None)
+        start_date = validated_data.pop('start_date', None)
+        end_date = validated_data.pop('end_date', None)
         request = self.context.get('request')
         tenant = getattr(request, 'tenant', None)
         validated_data['tenant'] = tenant
+        if start_date and end_date:
+            import re
+            desc = validated_data.get('description') or ''
+            if not re.search(r'from\s+\d{4}-\d{2}-\d{2}\s+to\s+\d{4}-\d{2}-\d{2}', desc, re.IGNORECASE):
+                validated_data['description'] = f"{desc} from {start_date} to {end_date}".strip()
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
-        validated_data.pop('start_date', None)
-        validated_data.pop('end_date', None)
+        start_date = validated_data.pop('start_date', None)
+        end_date = validated_data.pop('end_date', None)
+        if start_date and end_date:
+            import re
+            desc = validated_data.get('description', instance.description) or ''
+            if not re.search(r'from\s+\d{4}-\d{2}-\d{2}\s+to\s+\d{4}-\d{2}-\d{2}', desc, re.IGNORECASE):
+                validated_data['description'] = f"{desc} from {start_date} to {end_date}".strip()
         return super().update(instance, validated_data)
 
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         import re
-        desc = instance.description or ''
-        match = re.search(r'from\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})', desc)
+        search_txt = f"{instance.title or ''} {instance.description or ''}"
+        match = re.search(r'from\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})', search_txt, re.IGNORECASE)
         if match:
             ret['start_date'] = match.group(1)
             ret['end_date'] = match.group(2)
