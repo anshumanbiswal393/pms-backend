@@ -6,8 +6,6 @@ class MaintenanceTicketSerializer(serializers.ModelSerializer):
     property_name = serializers.CharField(source='property.name', read_only=True)
     asset_name = serializers.CharField(source='asset.asset_name', read_only=True)
     room_location = serializers.SerializerMethodField()
-    start_date = serializers.DateField(required=False, write_only=True)
-    end_date = serializers.DateField(required=False, write_only=True)
 
     class Meta:
         model = MaintenanceTicket
@@ -37,30 +35,38 @@ class MaintenanceTicketSerializer(serializers.ModelSerializer):
         if unit and unit.property != prop:
             raise serializers.ValidationError("Inventory unit must belong to the target property.")
 
-        # Check for confirmed guest reservation conflicts when blocking/servicing a room
-        if unit:
-            start_date = data.get('start_date')
-            end_date = data.get('end_date')
+        # Ensure start_date and end_date are resolved and checked for conflicts
+        start_date = data.get('start_date')
+        end_date = data.get('end_date')
 
-            if not start_date or not end_date:
-                import re
-                desc = data.get('description', '') or ''
-                match = re.search(r'from\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})', desc)
-                if match:
-                    from datetime import datetime
-                    try:
+        if not start_date or not end_date:
+            import re
+            desc = data.get('description', '') or ''
+            match = re.search(r'from\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})', desc, re.IGNORECASE)
+            if match:
+                from datetime import datetime
+                try:
+                    if not start_date:
                         start_date = datetime.strptime(match.group(1), '%Y-%m-%d').date()
+                        data['start_date'] = start_date
+                    if not end_date:
                         end_date = datetime.strptime(match.group(2), '%Y-%m-%d').date()
-                    except Exception:
-                        pass
+                        data['end_date'] = end_date
+                except Exception:
+                    pass
 
-            if not start_date or not end_date:
-                from django.utils import timezone
-                from datetime import timedelta
-                today = timezone.localdate() if hasattr(timezone, 'localdate') else timezone.now().date()
+        if not start_date or not end_date:
+            from django.utils import timezone
+            from datetime import timedelta
+            today = timezone.localdate() if hasattr(timezone, 'localdate') else timezone.now().date()
+            if not start_date:
                 start_date = today
+                data['start_date'] = start_date
+            if not end_date:
                 end_date = today + timedelta(days=1)
+                data['end_date'] = end_date
 
+        if unit:
             from apps.features.reservations.models import ReservationInventory
             conflicting_allocations = ReservationInventory.objects.filter(
                 tenant=tenant,
@@ -87,11 +93,11 @@ class MaintenanceTicketSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        start_date = validated_data.pop('start_date', None)
-        end_date = validated_data.pop('end_date', None)
         request = self.context.get('request')
         tenant = getattr(request, 'tenant', None)
         validated_data['tenant'] = tenant
+        start_date = validated_data.get('start_date')
+        end_date = validated_data.get('end_date')
         if start_date and end_date:
             import re
             desc = validated_data.get('description') or ''
@@ -100,8 +106,8 @@ class MaintenanceTicketSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
-        start_date = validated_data.pop('start_date', None)
-        end_date = validated_data.pop('end_date', None)
+        start_date = validated_data.get('start_date', instance.start_date)
+        end_date = validated_data.get('end_date', instance.end_date)
         if start_date and end_date:
             import re
             desc = validated_data.get('description', instance.description) or ''
@@ -111,22 +117,28 @@ class MaintenanceTicketSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         ret = super().to_representation(instance)
-        import re
-        search_txt = f"{instance.title or ''} {instance.description or ''}"
-        match = re.search(r'from\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})', search_txt, re.IGNORECASE)
-        if match:
-            ret['start_date'] = match.group(1)
-            ret['end_date'] = match.group(2)
-        elif instance.created_at:
-            from datetime import timedelta
-            ret['start_date'] = instance.created_at.date().isoformat()
-            ret['end_date'] = (instance.created_at.date() + timedelta(days=3)).isoformat()
-        else:
-            from django.utils import timezone
-            from datetime import timedelta
-            today = timezone.localdate() if hasattr(timezone, 'localdate') else timezone.now().date()
-            ret['start_date'] = today.isoformat()
-            ret['end_date'] = (today + timedelta(days=3)).isoformat()
+        # Ensure start_date and end_date are string dates in the output representation
+        if not ret.get('start_date') or not ret.get('end_date'):
+            if instance.start_date and instance.end_date:
+                ret['start_date'] = instance.start_date.isoformat()
+                ret['end_date'] = instance.end_date.isoformat()
+            else:
+                import re
+                search_txt = f"{instance.title or ''} {instance.description or ''}"
+                match = re.search(r'from\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})', search_txt, re.IGNORECASE)
+                if match:
+                    ret['start_date'] = match.group(1)
+                    ret['end_date'] = match.group(2)
+                elif instance.created_at:
+                    from datetime import timedelta
+                    ret['start_date'] = instance.created_at.date().isoformat()
+                    ret['end_date'] = (instance.created_at.date() + timedelta(days=3)).isoformat()
+                else:
+                    from django.utils import timezone
+                    from datetime import timedelta
+                    today = timezone.localdate() if hasattr(timezone, 'localdate') else timezone.now().date()
+                    ret['start_date'] = today.isoformat()
+                    ret['end_date'] = (today + timedelta(days=3)).isoformat()
 
         if instance.inventory_unit:
             ret['inventory_unit_name'] = instance.inventory_unit.name

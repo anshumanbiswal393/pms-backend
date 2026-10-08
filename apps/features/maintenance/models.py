@@ -40,6 +40,8 @@ class MaintenanceTicket(models.Model):
     asset = models.ForeignKey(Asset, on_delete=models.SET_NULL, null=True, blank=True, related_name='maintenance_tickets')
     title = models.CharField(max_length=120)
     description = models.TextField(null=True, blank=True)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
     category = models.CharField(max_length=32, choices=CATEGORY_CHOICES, default='GENERAL')
     priority = models.CharField(max_length=16, choices=PRIORITY_CHOICES, default='NORMAL')
     status = models.CharField(max_length=32, choices=STATUS_CHOICES, default='REPORTED')
