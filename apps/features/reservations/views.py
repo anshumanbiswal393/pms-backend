@@ -1102,7 +1102,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             reservation=reservation,
             event_type='GUEST_ADDED',
             description=f"Additional Guest {first_name} {last_name} added to reservation.",
-            actor_user=request.user
+            actor_user=request.user if getattr(request.user, 'is_authenticated', False) else None
         )
 
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
@@ -1129,7 +1129,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 reservation=reservation,
                 event_type='GUEST_REMOVED',
                 description=f"Guest {g_name} removed from reservation.",
-                actor_user=request.user
+                actor_user=request.user if getattr(request.user, 'is_authenticated', False) else None
             )
 
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
@@ -1177,8 +1177,28 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             reservation=reservation,
             event_type='CHARGE_POSTED',
             description=f"Folio charge '{description}' for ₹{amount_raw} added.",
-            actor_user=request.user
+            actor_user=request.user if getattr(request.user, 'is_authenticated', False) else None
         )
+
+        try:
+            from apps.features.front_office.models import GuestFolio, FolioTransaction
+            folio = GuestFolio.objects.filter(reservation=reservation, tenant=tenant).first()
+            if folio:
+                folio.total_charges = Decimal(str(folio.total_charges or 0)) + base_amount + tax_amount
+                folio.balance = folio.total_charges - folio.total_payments
+                if folio.status == 'SETTLED' and folio.balance > Decimal('0.00'):
+                    folio.status = 'OPEN'
+                folio.save()
+                FolioTransaction.objects.create(
+                    tenant=tenant,
+                    folio=folio,
+                    transaction_type='CHARGE',
+                    charge_code='EXTRA_CHARGE',
+                    amount=amount_raw,
+                    description=description,
+                )
+        except Exception:
+            pass
 
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
 
@@ -1209,7 +1229,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 reservation=reservation,
                 event_type='CHARGE_REMOVED',
                 description=f"Folio charge '{c_desc}' removed.",
-                actor_user=request.user
+                actor_user=request.user if getattr(request.user, 'is_authenticated', False) else None
             )
 
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
@@ -1237,8 +1257,28 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 reservation=reservation,
                 event_type='PAYMENT_RECEIVED',
                 description=f"{pay_type} of ₹{amount} received via {method}.",
-                actor_user=request.user
+                actor_user=request.user if getattr(request.user, 'is_authenticated', False) else None
             )
+
+            try:
+                from apps.features.front_office.models import GuestFolio, FolioTransaction
+                folio = GuestFolio.objects.filter(reservation=reservation, tenant=tenant).first()
+                if folio:
+                    folio.total_payments = Decimal(str(folio.total_payments or 0)) + amount
+                    folio.balance = folio.total_charges - folio.total_payments
+                    if folio.balance <= Decimal('0.00'):
+                        folio.status = 'SETTLED'
+                    folio.save()
+                    FolioTransaction.objects.create(
+                        tenant=tenant,
+                        folio=folio,
+                        transaction_type='PAYMENT',
+                        charge_code='PAYMENT',
+                        amount=amount,
+                        description=f"{pay_type} via {method}",
+                    )
+            except Exception:
+                pass
 
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
 
