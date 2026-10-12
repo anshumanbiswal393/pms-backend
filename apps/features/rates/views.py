@@ -19,7 +19,8 @@ from apps.features.rates.serializers import (
     RatePlanSerializer, RatePlanInventoryTypeSerializer, RatePlanVersionSerializer,
     DerivedRateConfigSerializer, RateRuleOccupancySerializer, RateRuleDayOfWeekSerializer,
     RateCalendarSerializer, TenantMealPlanPriceSerializer,
-    HospitalityPackageSerializer, RebuildCalendarSerializer, ServiceCategorySerializer, ServiceSerializer, CouponSerializer
+    HospitalityPackageSerializer, RebuildCalendarSerializer, ServiceCategorySerializer, ServiceSerializer, CouponSerializer,
+    resolve_request_tenant, get_request_user
 )
 from apps.features.rates.permissions import (
     HasRatePermission, IsRateCalendarManager, IsPolicyManager, IsPackageManager
@@ -384,10 +385,15 @@ class ServiceCategoryViewSet(RedisCacheMixin, viewsets.ModelViewSet):
     permission_classes = [IsPackageManager]
 
     def get_queryset(self):
-        tenant = getattr(self.request, 'tenant', None)
+        tenant = resolve_request_tenant(self.request)
         if not tenant:
             return ServiceCategory.objects.none()
         return ServiceCategory.objects.filter(tenant=tenant)
+
+    def perform_create(self, serializer):
+        tenant = resolve_request_tenant(self.request)
+        created_by = get_request_user(self.request)
+        serializer.save(tenant=tenant, created_by=created_by)
 
 class ServiceViewSet(RedisCacheMixin, viewsets.ModelViewSet):
     cache_timeout = 300
@@ -397,10 +403,15 @@ class ServiceViewSet(RedisCacheMixin, viewsets.ModelViewSet):
     search_fields = ['name']
 
     def get_queryset(self):
-        tenant = getattr(self.request, 'tenant', None)
+        tenant = resolve_request_tenant(self.request)
         if not tenant:
             return Service.objects.none()
         return Service.objects.filter(tenant=tenant)
+
+    def perform_create(self, serializer):
+        tenant = resolve_request_tenant(self.request)
+        created_by = get_request_user(self.request)
+        serializer.save(tenant=tenant, created_by=created_by)
 
 class CouponViewSet(viewsets.ModelViewSet):
     serializer_class = CouponSerializer

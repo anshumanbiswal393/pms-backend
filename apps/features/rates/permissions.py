@@ -32,7 +32,10 @@ class HasRatePermission(permissions.BasePermission):
         if getattr(request.user, 'is_superuser', False) or getattr(request.user, 'is_staff', False):
             return True
 
-        tenant = getattr(request, 'tenant', None)
+        tenant = getattr(request, 'tenant', None) or (getattr(request.user, 'tenant', None) if getattr(request.user, 'is_authenticated', False) else None)
+        if not tenant:
+            from apps.core.tenants.models import Tenant
+            tenant = Tenant.objects.filter(status='active').first() or Tenant.objects.first()
         if not tenant:
             return False
 

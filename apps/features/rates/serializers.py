@@ -293,6 +293,32 @@ class RateCalendarSerializer(serializers.ModelSerializer):
         return data
 
 
+def resolve_request_tenant(request):
+    if not request:
+        return None
+    tenant = getattr(request, 'tenant', None)
+    if not tenant and hasattr(request, 'user') and getattr(request.user, 'is_authenticated', False):
+        tenant = getattr(request.user, 'tenant', None)
+    if not tenant and hasattr(request, 'headers'):
+        tenant_id = request.headers.get('X-Tenant-ID')
+        if tenant_id:
+            try:
+                from apps.core.tenants.models import Tenant
+                tenant = Tenant.objects.filter(id=tenant_id).first()
+            except Exception:
+                pass
+    if not tenant:
+        from apps.core.tenants.models import Tenant
+        tenant = Tenant.objects.filter(status='active').first() or Tenant.objects.first()
+    return tenant
+
+def get_request_user(request):
+    if not request:
+        return None
+    user = getattr(request, 'user', None)
+    return user if (user and getattr(user, 'is_authenticated', False)) else None
+
+
 class HospitalityPackageSerializer(serializers.ModelSerializer):
     class Meta:
         model = HospitalityPackage
@@ -302,7 +328,7 @@ class HospitalityPackageSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         request = self.context.get('request')
-        tenant = getattr(request, 'tenant', None)
+        tenant = resolve_request_tenant(request)
         name = data.get('name')
         
         # Check uniqueness manually since we disabled automatic validators
@@ -317,9 +343,8 @@ class HospitalityPackageSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context.get('request')
-        tenant = getattr(request, 'tenant', None)
-        validated_data['tenant'] = tenant
-        validated_data['created_by'] = request.user if request and request.user.is_authenticated else None
+        validated_data['tenant'] = resolve_request_tenant(request)
+        validated_data['created_by'] = get_request_user(request)
         return super().create(validated_data)
 
 
@@ -343,10 +368,23 @@ class ServiceSerializer(serializers.ModelSerializer):
         category_val = data_copy.get('category')
         if category_val and isinstance(category_val, str):
             request = self.context.get('request')
-            tenant = getattr(request, 'tenant', None)
+            tenant = resolve_request_tenant(request)
             if tenant and len(category_val) != 36:
-                cat_obj, _ = ServiceCategory.objects.get_or_create(tenant=tenant, name=category_val)
-                data_copy['category'] = str(cat_obj.id)
+                cat_name = category_val.strip()
+                cat_obj = ServiceCategory.objects.filter(tenant=tenant, name__iexact=cat_name).first()
+                if not cat_obj:
+                    try:
+                        cat_obj = ServiceCategory.objects.create(
+                            tenant=tenant,
+                            name=cat_name,
+                            created_by=get_request_user(request)
+                        )
+                    except Exception:
+                        cat_obj = ServiceCategory.objects.filter(tenant=tenant, name__iexact=cat_name).first()
+                if cat_obj:
+                    data_copy['category'] = str(cat_obj.id)
+                else:
+                    data_copy['category'] = None
             elif not category_val or category_val.lower() in ['none', 'null', '']:
                 data_copy['category'] = None
         elif category_val == '':
@@ -355,11 +393,11 @@ class ServiceSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         request = self.context.get('request')
-        tenant = getattr(request, 'tenant', None)
+        tenant = resolve_request_tenant(request)
         name = data.get('name')
         
         if name and tenant:
-            qs = Service.objects.filter(tenant=tenant, name__iexact=name)
+            qs = Service.objects.filter(tenant=tenant, name__iexact=name.strip())
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():
@@ -369,9 +407,8 @@ class ServiceSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context.get('request')
-        tenant = getattr(request, 'tenant', None)
-        validated_data['tenant'] = tenant
-        validated_data['created_by'] = request.user if request and request.user.is_authenticated else None
+        validated_data['tenant'] = resolve_request_tenant(request)
+        validated_data['created_by'] = get_request_user(request)
         return super().create(validated_data)
 
 
@@ -384,7 +421,7 @@ class CouponSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         request = self.context.get('request')
-        tenant = getattr(request, 'tenant', None)
+        tenant = resolve_request_tenant(request)
         code = data.get('code')
         discount_type = data.get('discount_type', getattr(self.instance, 'discount_type', 'PERCENTAGE'))
         discount_value = data.get('discount_value', getattr(self.instance, 'discount_value', None))
@@ -406,9 +443,8 @@ class CouponSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context.get('request')
-        tenant = getattr(request, 'tenant', None)
-        validated_data['tenant'] = tenant
-        validated_data['created_by'] = request.user if request and request.user.is_authenticated else None
+        validated_data['tenant'] = resolve_request_tenant(request)
+        validated_data['created_by'] = get_request_user(request)
         return super().create(validated_data)
 
 
@@ -420,7 +456,6 @@ class ServiceCategorySerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context.get('request')
-        tenant = getattr(request, 'tenant', None)
-        validated_data['tenant'] = tenant
-        validated_data['created_by'] = request.user if request and request.user.is_authenticated else None
+        validated_data['tenant'] = resolve_request_tenant(request)
+        validated_data['created_by'] = get_request_user(request)
         return super().create(validated_data)

@@ -846,6 +846,44 @@ class CreateBookingSerializer(serializers.Serializer):
     corporate_gst_number = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     corporate_travel_purpose = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
+    def validate_corporate_po_ref(self, value):
+        if value:
+            import re
+            val = value.strip()
+            if not re.match(r'^[a-zA-Z0-9\s\-_./]+$', val):
+                raise serializers.ValidationError("PO / Reference can only contain letters, numbers, spaces, hyphens, underscores, slashes, and dots.")
+            if len(val) > 50:
+                raise serializers.ValidationError("PO / Reference cannot exceed 50 characters.")
+        return value
+
+    def validate_corporate_employee_id(self, value):
+        if value:
+            import re
+            val = value.strip()
+            if not re.match(r'^[a-zA-Z0-9\-_/]+$', val):
+                raise serializers.ValidationError("Employee / Traveler ID can only contain letters, numbers, hyphens, underscores, and slashes (no spaces or special characters).")
+            if len(val) > 30:
+                raise serializers.ValidationError("Employee / Traveler ID cannot exceed 30 characters.")
+        return value
+
+    def validate_corporate_cost_center(self, value):
+        if value:
+            import re
+            val = value.strip()
+            if not re.match(r'^[a-zA-Z0-9\s\-_/]+$', val):
+                raise serializers.ValidationError("Cost Center can only contain letters, numbers, spaces, hyphens, underscores, and slashes.")
+            if len(val) > 50:
+                raise serializers.ValidationError("Cost Center cannot exceed 50 characters.")
+        return value
+
+    def validate_corporate_gst_number(self, value):
+        if value:
+            import re
+            val = value.strip().upper()
+            if not re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$', val):
+                raise serializers.ValidationError("Invalid GST Number. Expected 15-character alphanumeric GSTIN format (e.g., 22AAAAA0000A1Z5) with no special characters.")
+        return value
+
     # Check-in and Check-out custom times
     check_in_time = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     check_out_time = serializers.CharField(required=False, allow_blank=True, allow_null=True)
