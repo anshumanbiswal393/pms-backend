@@ -1109,28 +1109,80 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='remove-guest')
     def remove_guest(self, request, pk=None):
+        import uuid
         tenant = getattr(request, 'tenant', None)
         if not tenant:
             return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
 
         reservation = self.get_object()
         guest_id = request.data.get('guest_id') or request.data.get('reservation_guest_id')
+        guest_name = (request.data.get('guest_name') or request.data.get('name') or '').strip()
 
-        rg = ReservationGuest.objects.filter(
-            tenant=tenant,
-            reservation_inventory__reservation=reservation
-        ).filter(models.Q(id=guest_id) | models.Q(guest_id=guest_id)).first()
+        rg = None
+        is_uuid = False
+        if guest_id:
+            try:
+                uuid.UUID(str(guest_id).strip())
+                is_uuid = True
+            except (ValueError, AttributeError):
+                is_uuid = False
 
-        if rg:
-            g_name = f"{rg.guest.first_name} {rg.guest.last_name}" if rg.guest else "Guest"
-            rg.delete()
-            ReservationEvent.objects.create(
+        if is_uuid:
+            rg = ReservationGuest.objects.filter(
                 tenant=tenant,
-                reservation=reservation,
-                event_type='GUEST_REMOVED',
-                description=f"Guest {g_name} removed from reservation.",
-                actor_user=request.user if getattr(request.user, 'is_authenticated', False) else None
-            )
+                reservation_inventory__reservation=reservation
+            ).filter(models.Q(id=guest_id) | models.Q(guest_id=guest_id)).first()
+
+        g_name = guest_name or "Guest"
+        if rg:
+            g_name = f"{rg.guest.first_name} {rg.guest.last_name}".strip() if rg.guest else (guest_name or "Guest")
+            rg.delete()
+
+        # Clean up any reference in reservation.notes / remarks (e.g. for parsed notes or duplicate notes entry)
+        notes_str = reservation.notes or ""
+        marker = "Additional Guests:"
+        if marker in notes_str:
+            marker_idx = notes_str.find(marker)
+            prefix = notes_str[:marker_idx]
+            guests_section = notes_str[marker_idx + len(marker):]
+            lines = guests_section.split("\n")
+
+            target_idx = None
+            if guest_id and str(guest_id).startswith("parsed-note-"):
+                try:
+                    target_idx = int(str(guest_id).replace("parsed-note-", ""))
+                except ValueError:
+                    pass
+
+            new_lines = []
+            for idx, line in enumerate(lines):
+                if target_idx is not None and idx == target_idx:
+                    continue
+                if target_idx is None and g_name and g_name.lower() in line.lower():
+                    continue
+                new_lines.append(line)
+
+            remaining_guest_lines = [
+                l for l in new_lines
+                if l.strip() and not l.strip().startswith("---") and not l.strip().startswith("===")
+            ]
+            if remaining_guest_lines:
+                reservation.notes = (prefix + marker + "\n" + "\n".join(new_lines)).rstrip()
+            else:
+                reservation.notes = prefix.strip()
+
+            if reservation.remarks == notes_str:
+                reservation.remarks = reservation.notes
+
+            reservation.save(update_fields=['notes', 'remarks'])
+
+        ReservationEvent.objects.create(
+            tenant=tenant,
+            reservation=reservation,
+            event_type='GUEST_REMOVED',
+            description=f"Guest {g_name} removed from reservation.",
+            actor_user=request.user if getattr(request.user, 'is_authenticated', False) else None
+        )
 
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
 

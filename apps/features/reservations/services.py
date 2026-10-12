@@ -493,12 +493,12 @@ class BookingEngine:
 
             # Persist additional / accompanying guests for this allocation
             add_guests = booking_data.get('additional_guests') or booking_data.get('additionalGuests') or []
-            for g_item in add_guests:
+            for g_idx, g_item in enumerate(add_guests):
                 if not isinstance(g_item, dict):
                     continue
-                g_name = (g_item.get('name') or g_item.get('fullName') or '').strip()
+                g_name = (g_item.get('name') or g_item.get('fullName') or g_item.get('guest_name') or '').strip()
                 if not g_name:
-                    continue
+                    g_name = f"Guest {g_idx + 2}: Unnamed"
                 g_type = g_item.get('type') or g_item.get('guest_type') or 'Adult'
                 g_age = str(g_item.get('age') or '')
                 g_gender = g_item.get('gender') or ''
