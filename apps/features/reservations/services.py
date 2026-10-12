@@ -67,6 +67,45 @@ def check_room_availability(tenant, room, check_in_date, check_out_date, exclude
             if pickup_loc and room.name in [r.strip() for r in pickup_loc.split(',') if r.strip()]:
                 raise ValidationError(f"Room {room.name} is currently blocked in Group '{b.name}' for these dates.")
 
+        # Check active maintenance tickets / room blocks
+        try:
+            from apps.features.maintenance.models import MaintenanceTicket
+            from django.db.models import Q
+            import datetime
+
+            c_in = check_in_date.date() if hasattr(check_in_date, 'date') else check_in_date
+            c_out = check_out_date.date() if hasattr(check_out_date, 'date') else check_out_date
+            if isinstance(c_in, str):
+                c_in = datetime.datetime.strptime(c_in[:10], '%Y-%m-%d').date()
+            if isinstance(c_out, str):
+                c_out = datetime.datetime.strptime(c_out[:10], '%Y-%m-%d').date()
+
+            active_tickets = MaintenanceTicket.objects.filter(
+                tenant=tenant
+            ).filter(
+                Q(inventory_unit=room) | Q(location__iexact=room.name) | Q(location__iexact=f"Room {room.name}")
+            ).exclude(status__in=['RESOLVED', 'CANCELLED'])
+
+            for ticket in active_tickets:
+                t_start = ticket.start_date
+                t_end = ticket.end_date
+                if not t_start and ticket.created_at:
+                    t_start = ticket.created_at.date()
+                if not t_end and t_start:
+                    t_end = t_start + datetime.timedelta(days=3)
+
+                if t_start and t_end and t_start < c_out and c_in < t_end:
+                    reason = ticket.title or ticket.description or "Room set to maintenance"
+                    raise ValidationError(f"Room {room.name} is currently blocked under maintenance ({reason}) from {t_start} to {t_end}.")
+
+            if (room.operational_status and room.operational_status.lower() in ['maintenance', 'offline']) or \
+               (room.status and room.status.upper() in ['BLOCKED', 'MAINTENANCE', 'OUT_OF_SERVICE']):
+                if not active_tickets.exists():
+                    reason = getattr(room, 'status_reason', '') or getattr(room, 'notes', '') or 'Room set to maintenance'
+                    raise ValidationError(f"Room {room.name} is currently offline/under maintenance ({reason}).")
+        except ImportError:
+            pass
+
 def make_serializable(data):
     if isinstance(data, dict):
         return {k: make_serializable(v) for k, v in data.items()}
