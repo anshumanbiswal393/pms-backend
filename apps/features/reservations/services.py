@@ -98,13 +98,17 @@ def check_room_availability(tenant, room, check_in_date, check_out_date, exclude
                     reason = ticket.title or ticket.description or "Room set to maintenance"
                     raise ValidationError(f"Room {room.name} is currently blocked under maintenance ({reason}) from {t_start} to {t_end}.")
 
-            if (room.operational_status and room.operational_status.lower() in ['maintenance', 'offline']) or \
-               (room.status and room.status.upper() in ['BLOCKED', 'MAINTENANCE', 'OUT_OF_SERVICE']):
+            room_op_status = (getattr(room, 'operational_status', '') or '').lower()
+            room_status = str(getattr(room, 'status', '') or '').upper()
+            if (room_op_status in ['maintenance', 'offline']) or \
+               (room_status in ['BLOCKED', 'MAINTENANCE', 'OUT_OF_SERVICE']):
                 if not active_tickets.exists():
                     reason = getattr(room, 'status_reason', '') or getattr(room, 'notes', '') or 'Room set to maintenance'
                     raise ValidationError(f"Room {room.name} is currently offline/under maintenance ({reason}).")
-        except ImportError:
-            pass
+        except (ImportError, Exception) as exc:
+            if isinstance(exc, ValidationError):
+                raise exc
+            logger.warning(f"Error checking maintenance status for room {getattr(room, 'name', '')}: {exc}")
 
 def make_serializable(data):
     if isinstance(data, dict):
