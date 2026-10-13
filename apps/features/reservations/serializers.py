@@ -460,11 +460,15 @@ def get_reservation_meta(obj):
                     id_number = str(doc.document_number)
             id_proof_url = doc.attachment_url or ""
 
-    if not name and first_snap:
-        name = first_snap.get('name') or first_snap.get('fullName') or f"{first_snap.get('first_name', '')} {first_snap.get('last_name', '')}".strip()
+    if first_snap and (first_snap.get('name') or first_snap.get('fullName')):
+        name = (first_snap.get('name') or first_snap.get('fullName') or '').strip()
+    if not name and guest:
+        name = f"{getattr(guest, 'first_name', '') or ''} {getattr(guest, 'last_name', '') or ''}".strip()
     if not name:
         name = getattr(obj, 'event_organizer_name', '') or "Guest"
 
+    if first_snap and first_snap.get('phone') and first_snap.get('phone') not in ['+91-', '+91', '0000000000']:
+        phone = first_snap.get('phone')
     if not phone:
         for snap in all_snaps:
             ph = snap.get('phone') or snap.get('guest_phone')
@@ -474,11 +478,10 @@ def get_reservation_meta(obj):
         if not phone:
             phone = getattr(obj, 'event_organizer_contact', '') or ""
 
+    if first_snap and first_snap.get('email') and first_snap.get('email') != 'guest@example.com':
+        email = first_snap.get('email')
     if not email:
-        if first_snap:
-            email = first_snap.get('email') or first_snap.get('guest_email') or ""
-        if not email:
-            email = getattr(obj, 'event_organizer_email', '') or ""
+        email = getattr(obj, 'event_organizer_email', '') or ""
 
     if not address and first_snap:
         address = first_snap.get('address') or first_snap.get('address_line_1') or first_snap.get('city') or ""

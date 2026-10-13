@@ -222,9 +222,18 @@ class BookingEngine:
         """
         # Resolve Primary Guest (either lookup by UUID, lookup by contact/email/phone, or create inline)
         primary_guest = None
+        full_name_input = (booking_data.get('fullName') or booking_data.get('event_organizer_name') or '').strip()
+
         if booking_data.get('primary_guest_id'):
             try:
-                primary_guest = GuestProfile.objects.get(id=booking_data['primary_guest_id'], tenant=tenant)
+                candidate = GuestProfile.objects.get(id=booking_data['primary_guest_id'], tenant=tenant)
+                if full_name_input:
+                    cand_full = f"{candidate.first_name or ''} {candidate.last_name or ''}".strip().lower()
+                    inp_lower = full_name_input.lower()
+                    if inp_lower == cand_full or inp_lower == (candidate.first_name or '').lower() or cand_full.startswith(inp_lower) or inp_lower.startswith(cand_full):
+                        primary_guest = candidate
+                else:
+                    primary_guest = candidate
             except GuestProfile.DoesNotExist:
                 primary_guest = None
 
@@ -244,7 +253,14 @@ class BookingEngine:
             if not contact and email and email != 'guest@example.com':
                 contact = GuestContact.objects.filter(tenant=tenant, email=email).first()
             if contact:
-                primary_guest = contact.guest
+                cand = contact.guest
+                if full_name_input:
+                    cand_full = f"{cand.first_name or ''} {cand.last_name or ''}".strip().lower()
+                    inp_lower = full_name_input.lower()
+                    if inp_lower == cand_full or inp_lower == (cand.first_name or '').lower() or cand_full.startswith(inp_lower) or inp_lower.startswith(cand_full):
+                        primary_guest = cand
+                else:
+                    primary_guest = cand
 
         if primary_guest:
             if phone or email or address:
@@ -521,16 +537,16 @@ class BookingEngine:
                 guest=primary_guest,
                 is_primary=True,
                 guest_snapshot={
-                    'name': f"{primary_guest.first_name or ''} {primary_guest.last_name or ''}".strip(),
+                    'name': full_name_input or f"{primary_guest.first_name or ''} {primary_guest.last_name or ''}".strip(),
                     'first_name': primary_guest.first_name,
                     'last_name': primary_guest.last_name,
                     'type': 'Primary',
-                    'email': primary_contact.email if primary_contact else None,
-                    'phone': primary_contact.phone if primary_contact else None,
-                    'address': f"{primary_contact.address_line_1 or ''} {primary_contact.city or ''} {primary_contact.state or ''}".strip() if primary_contact else None,
-                    'id_type': primary_doc.document_type if primary_doc else None,
-                    'id_number': doc_number_plain or None,
-                    'id_proof_url': primary_doc.attachment_url if primary_doc else None,
+                    'email': email or (primary_contact.email if primary_contact else None),
+                    'phone': phone or (primary_contact.phone if primary_contact else None),
+                    'address': address or (f"{primary_contact.address_line_1 or ''} {primary_contact.city or ''} {primary_contact.state or ''}".strip() if primary_contact else None),
+                    'id_type': (id_type if id_type and id_type != "PASSPORT" else None) or (primary_doc.document_type if primary_doc else None),
+                    'id_number': id_number or doc_number_plain or None,
+                    'id_proof_url': id_proof_url or (primary_doc.attachment_url if primary_doc else None),
                 }
             )
 

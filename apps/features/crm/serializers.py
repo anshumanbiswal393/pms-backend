@@ -26,12 +26,14 @@ class GuestProfileSerializer(serializers.ModelSerializer):
     id_type = serializers.SerializerMethodField()
     id_number = serializers.SerializerMethodField()
     id_proof_url = serializers.SerializerMethodField()
+    is_vip = serializers.SerializerMethodField()
 
     class Meta:
         model = GuestProfile
         fields = (
             'id', 'tenant', 'master_guest', 'first_name', 'last_name', 'name', 'date_of_birth',
             'gender', 'nationality', 'preferred_language', 'guest_type', 'loyalty_tier', 'tier',
+            'is_vip',
             'loyalty_points', 'nps_score', 'nps', 'vip_notes', 'email_opt_in', 'sms_opt_in',
             'whatsapp_opt_in', 'total_stays', 'visits', 'total_nights', 'last_stay_date', 'is_active',
             'created_at', 'updated_at', 'created_by', 'updated_by', 'primary_email', 'email',
@@ -75,7 +77,12 @@ class GuestProfileSerializer(serializers.ModelSerializer):
             return primary_contact.country
         return obj.nationality or "India"
 
+    def get_is_vip(self, obj):
+        return obj.guest_type == 'VIP' or str(obj.loyalty_tier).upper() == 'VIP'
+
     def get_tier(self, obj):
+        if obj.guest_type == 'VIP':
+            return 'VIP'
         tier_map = {
             'PLATINUM': 'Platinum',
             'GOLD': 'Gold',
@@ -166,16 +173,35 @@ class GuestProfileSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         request = self.context.get('request')
         if request:
+            is_vip_val = request.data.get('is_vip')
+            if is_vip_val is not None:
+                if is_vip_val:
+                    instance.guest_type = 'VIP'
+                elif instance.guest_type == 'VIP':
+                    instance.guest_type = 'DOMESTIC'
+                instance.save()
+
+            country_val = request.data.get('country') or request.data.get('nationality')
+            if country_val:
+                instance.nationality = country_val
+                instance.save(update_fields=['nationality'])
+
+            vip_notes_val = request.data.get('vip_notes')
+            if vip_notes_val is not None:
+                instance.vip_notes = vip_notes_val
+                instance.save(update_fields=['vip_notes'])
+
             email = request.data.get('primary_email') or request.data.get('email')
             phone = request.data.get('primary_phone') or request.data.get('phone')
             address = request.data.get('primary_address') or request.data.get('address')
             
-            if email is not None or phone is not None or address is not None:
+            if email is not None or phone is not None or address is not None or country_val is not None:
                 contact = instance.contacts.filter(is_primary=True).first() or instance.contacts.first()
                 if contact:
                     if email is not None: contact.email = email
                     if phone is not None: contact.phone = phone
                     if address is not None: contact.address_line_1 = address
+                    if country_val is not None: contact.country = country_val
                     try:
                         contact.save()
                     except Exception:
@@ -188,6 +214,7 @@ class GuestProfileSerializer(serializers.ModelSerializer):
                             email=email or "",
                             phone=phone or "",
                             address_line_1=address or "",
+                            country=country_val or "",
                             is_primary=True
                         )
                     except Exception:
@@ -252,7 +279,71 @@ class GuestProfileSerializer(serializers.ModelSerializer):
         tenant = getattr(request, 'tenant', None)
         validated_data['tenant'] = tenant
         validated_data['created_by'] = request.user if request and request.user.is_authenticated else None
-        return super().create(validated_data)
+        
+        is_vip_val = False
+        if request:
+            is_vip_val = bool(request.data.get('is_vip') or request.data.get('guest_type') == 'VIP')
+        if is_vip_val:
+            validated_data['guest_type'] = 'VIP'
+
+        instance = super().create(validated_data)
+
+        if request:
+            country_val = request.data.get('country') or request.data.get('nationality')
+            if country_val and not instance.nationality:
+                instance.nationality = country_val
+                instance.save(update_fields=['nationality'])
+
+            vip_notes_val = request.data.get('vip_notes')
+            if vip_notes_val and not instance.vip_notes:
+                instance.vip_notes = vip_notes_val
+                instance.save(update_fields=['vip_notes'])
+
+            email = request.data.get('primary_email') or request.data.get('email')
+            phone = request.data.get('primary_phone') or request.data.get('phone')
+            address = request.data.get('primary_address') or request.data.get('address')
+            if email or phone or address or country_val:
+                try:
+                    GuestContact.objects.create(
+                        tenant=instance.tenant,
+                        guest=instance,
+                        email=email or "",
+                        phone=phone or "",
+                        address_line_1=address or "",
+                        country=country_val or "",
+                        is_primary=True
+                    )
+                except Exception:
+                    pass
+
+            id_type = request.data.get('id_type')
+            id_number = request.data.get('id_number')
+            id_proof_url = request.data.get('id_proof_url')
+            if id_type or id_number or id_proof_url:
+                doc_type = 'NATIONAL_ID'
+                if id_type:
+                    id_type_upper = str(id_type).upper()
+                    if 'PASS' in id_type_upper:
+                        doc_type = 'PASSPORT'
+                    elif 'LICEN' in id_type_upper or 'DRIV' in id_type_upper:
+                        doc_type = 'DRIVING_LICENCE'
+                    else:
+                        doc_type = 'NATIONAL_ID'
+                encrypted_doc_num = EncryptionHelper.encrypt(id_number) if id_number else ""
+                try:
+                    GuestDocument.objects.create(
+                        tenant=instance.tenant,
+                        guest=instance,
+                        document_type=doc_type,
+                        document_number=encrypted_doc_num,
+                        attachment_url=id_proof_url or "",
+                        is_verified=False
+                    )
+                except Exception:
+                    pass
+
+        return instance
+
 
 
 class GuestContactSerializer(serializers.ModelSerializer):

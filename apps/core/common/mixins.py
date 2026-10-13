@@ -58,6 +58,11 @@ class RedisCacheMixin:
             cache.delete(keys_set_name)
         except Exception:
             pass
+        try:
+            if hasattr(cache, 'delete_pattern'):
+                cache.delete_pattern(f"*{prefix}*")
+        except Exception:
+            pass
 
     def _track_cache_key(self, key):
         prefix = self._get_cache_prefix()

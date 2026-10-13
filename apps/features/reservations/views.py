@@ -345,6 +345,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                         user=request.user if request.user.is_authenticated else None
                     )
                     # After running amend_stay, return refreshed serialized instance
+                    self._invalidate_cache()
                     serializer = self.get_serializer(instance)
                     return Response(serializer.data, status=status.HTTP_200_OK)
                 except DjangoValidationError as e:
@@ -352,7 +353,9 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 except Exception as e:
                     return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
-        return super().partial_update(request, *args, **kwargs)
+        response = super().partial_update(request, *args, **kwargs)
+        self._invalidate_cache()
+        return response
 
     @extend_schema(request=PriceEstimationSerializer, responses={200: dict})
     @action(detail=False, methods=['post'], url_path='estimate')
@@ -402,6 +405,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             if isinstance(detail, list) and len(detail) == 1:
                 detail = detail[0]
             return Response({'error': detail, 'detail': detail}, status=status.HTTP_400_BAD_REQUEST)
+        self._invalidate_cache()
         output = self.get_serializer(reservation)
         return Response(output.data, status=status.HTTP_201_CREATED)
 
@@ -525,6 +529,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             handle_django_validation_error(e)
         # return updated reservation
         reservation.refresh_from_db()
+        self._invalidate_cache()
         output = self.get_serializer(reservation)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -544,6 +549,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             )
         except DjangoValidationError as e:
             handle_django_validation_error(e)
+        self._invalidate_cache()
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -563,6 +569,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             )
         except DjangoValidationError as e:
             handle_django_validation_error(e)
+        self._invalidate_cache()
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -582,6 +589,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             )
         except DjangoValidationError as e:
             handle_django_validation_error(e)
+        self._invalidate_cache()
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -601,6 +609,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             )
         except DjangoValidationError as e:
             handle_django_validation_error(e)
+        self._invalidate_cache()
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -621,6 +630,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             cancellation_reason=serializer.validated_data.get('cancellation_reason'),
             user=request.user
         )
+        self._invalidate_cache()
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -642,6 +652,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             )
         except DjangoValidationError as e:
             handle_django_validation_error(e)
+        self._invalidate_cache()
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -663,6 +674,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             special_requests=serializer.validated_data.get('special_requests'),
             user=request.user
         )
+        self._invalidate_cache()
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -692,6 +704,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+        self._invalidate_cache()
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -977,6 +990,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+        self._invalidate_cache()
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
 
@@ -1105,6 +1119,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             actor_user=request.user if getattr(request.user, 'is_authenticated', False) else None
         )
 
+        self._invalidate_cache()
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='remove-guest')
@@ -1184,6 +1199,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             actor_user=request.user if getattr(request.user, 'is_authenticated', False) else None
         )
 
+        self._invalidate_cache()
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='add-charge')
@@ -1252,6 +1268,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         except Exception:
             pass
 
+        self._invalidate_cache()
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='remove-charge')
@@ -1284,6 +1301,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 actor_user=request.user if getattr(request.user, 'is_authenticated', False) else None
             )
 
+        self._invalidate_cache()
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='record-payment')
@@ -1332,6 +1350,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             except Exception:
                 pass
 
+        self._invalidate_cache()
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
 
     @extend_schema(request=None, responses={200: ReservationSerializer})
@@ -1347,6 +1366,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             reservation_id=reservation.id,
             user=request.user
         )
+        self._invalidate_cache()
         return Response(self.get_serializer(updated).data, status=status.HTTP_200_OK)
 
     @extend_schema(request=SplitReservationSerializer, responses={200: ReservationSerializer})
@@ -1365,6 +1385,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             allocation_ids=serializer.validated_data['allocation_ids'],
             user=request.user
         )
+        self._invalidate_cache()
         return Response({
             'parent': self.get_serializer(parent).data,
             'child': self.get_serializer(child).data
@@ -1390,6 +1411,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             secondary_reservation_id=secondary_id,
             user=request.user
         )
+        self._invalidate_cache()
         return Response(self.get_serializer(updated).data, status=status.HTTP_200_OK)
 
     @extend_schema(request=RoomUpgradeSerializer, responses={200: ReservationSerializer})
@@ -1412,6 +1434,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             )
         except DjangoValidationError as e:
             handle_django_validation_error(e)
+        self._invalidate_cache()
         return Response(self.get_serializer(self.get_object()).data, status=status.HTTP_200_OK)
 
     @extend_schema(request=RoomChangeSerializer, responses={200: ReservationSerializer})
@@ -1486,6 +1509,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             handle_django_validation_error(e)
 
         reservation.refresh_from_db()
+        self._invalidate_cache()
         return Response(self.get_serializer(reservation).data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'], url_path='validate-availability')
