@@ -628,7 +628,26 @@ class BookingEngine:
                 )
 
             # Create daily rate snapshots
-            rate_plan = RatePlan.objects.get(id=alloc_item['rate_plan_id'], tenant=tenant)
+            rp_id = alloc_item.get('rate_plan_id')
+            rate_plan = None
+            if rp_id:
+                rate_plan = RatePlan.objects.filter(id=rp_id, tenant=tenant).first()
+            if not rate_plan:
+                rate_plan = RatePlan.objects.filter(property=property_obj, is_active=True).first() or \
+                            RatePlan.objects.filter(property=property_obj).first() or \
+                            RatePlan.objects.filter(tenant=tenant, is_active=True).first() or \
+                            RatePlan.objects.filter(tenant=tenant).first()
+            if not rate_plan:
+                rate_plan, _ = RatePlan.objects.get_or_create(
+                    property=property_obj,
+                    code='BAR',
+                    defaults={
+                        'tenant': tenant,
+                        'name': 'Best Available Rate',
+                        'category': 'bar',
+                        'is_active': True,
+                    }
+                )
             
             # Resolve guest chosen meal plan or rate plan default meal plan
             meal_plan = None

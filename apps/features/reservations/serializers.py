@@ -551,6 +551,8 @@ class ReservationListSerializer(serializers.ModelSerializer):
     checked_out_at = serializers.SerializerMethodField()
     reservation_number = serializers.CharField(source='confirmation_number', read_only=True)
     confirmation_code = serializers.CharField(source='confirmation_number', read_only=True)
+    invoice_number = serializers.SerializerMethodField()
+    room_number = serializers.SerializerMethodField()
 
     class Meta:
         model = Reservation
@@ -562,9 +564,32 @@ class ReservationListSerializer(serializers.ModelSerializer):
             'primary_guest', 'primary_guest_name', 'primary_guest_phone', 'primary_guest_email',
             'primary_guest_id_type', 'primary_guest_id_number', 'primary_guest_id_proof_url', 'primary_guest_nationality', 'primary_guest_tier', 'primary_guest_city', 'primary_guest_address',
             'reservation_source', 'reservation_source_name', 'reservation_source_icon',
-            'corporate_account', 'group_block', 'room_allocations', 'rate_plan_name', 'rate_plan_code',
+            'corporate_account', 'group_block', 'room_allocations', 'room_number', 'rate_plan_name', 'rate_plan_code',
+            'invoice_number',
             'created_by_name', 'checked_in_by_name', 'checked_out_at', 'actor_name', 'created_at', 'updated_at'
         ]
+
+    def get_invoice_number(self, obj):
+        try:
+            from apps.features.billing.models import Invoice
+            inv = Invoice.objects.filter(folio__reservation=obj).first()
+            if inv and inv.invoice_number:
+                return inv.invoice_number
+        except Exception:
+            pass
+        folios = list(obj.folios.all()) if hasattr(obj, 'folios') else []
+        if folios and folios[0].folio_number:
+            return f"INV-{folios[0].folio_number}"
+        conf = obj.confirmation_number or str(obj.id)[:8].upper()
+        return f"INV-{conf}"
+
+    def get_room_number(self, obj):
+        allocs = list(obj.room_allocations.all()) if hasattr(obj, 'room_allocations') else []
+        if allocs:
+            units = [a.inventory_unit.name for a in allocs if a.inventory_unit and a.inventory_unit.name]
+            if units:
+                return ", ".join(units)
+        return ""
 
     def get_rate_plan_name(self, obj):
         return get_reservation_meta(obj)['rate_plan_name']
@@ -684,6 +709,7 @@ class ReservationSerializer(serializers.ModelSerializer):
     actor_name = serializers.SerializerMethodField()
     reservation_number = serializers.CharField(source='confirmation_number', read_only=True)
     confirmation_code = serializers.CharField(source='confirmation_number', read_only=True)
+    invoice_number = serializers.SerializerMethodField()
 
     class Meta:
         model = Reservation
@@ -692,6 +718,20 @@ class ReservationSerializer(serializers.ModelSerializer):
             'id', 'tenant', 'confirmation_number', 'total_amount', 'tax_amount',
             'booking_date', 'status', 'created_at', 'updated_at'
         )
+
+    def get_invoice_number(self, obj):
+        try:
+            from apps.features.billing.models import Invoice
+            inv = Invoice.objects.filter(folio__reservation=obj).first()
+            if inv and inv.invoice_number:
+                return inv.invoice_number
+        except Exception:
+            pass
+        folios = list(obj.folios.all()) if hasattr(obj, 'folios') else []
+        if folios and folios[0].folio_number:
+            return f"INV-{folios[0].folio_number}"
+        conf = obj.confirmation_number or str(obj.id)[:8].upper()
+        return f"INV-{conf}"
 
     def get_created_by_name(self, obj):
         if obj.created_by:

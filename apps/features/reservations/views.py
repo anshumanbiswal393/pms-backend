@@ -1676,11 +1676,50 @@ class WaitlistViewSet(viewsets.ModelViewSet):
 
         # 2. Call BookingEngine.create_booking to create actual reservation
         from apps.features.reservations.services import BookingEngine
-        from apps.features.rates.models import RatePlan
+        from apps.features.rates.models import RatePlan, RatePlanInventoryType
+        from datetime import timedelta
         
-        # Get first active rate plan for the property
+        # Get active rate plan for the property or tenant, or create default BAR plan
         rate_plan = RatePlan.objects.filter(property=entry.property, is_active=True).first()
-        rate_plan_id = str(rate_plan.id) if rate_plan else None
+        if not rate_plan:
+            rate_plan = RatePlan.objects.filter(property=entry.property).first()
+        if not rate_plan and tenant:
+            rate_plan = RatePlan.objects.filter(tenant=tenant, is_active=True).first()
+        if not rate_plan and tenant:
+            rate_plan = RatePlan.objects.filter(tenant=tenant).first()
+        if not rate_plan:
+            rate_plan, _ = RatePlan.objects.get_or_create(
+                property=entry.property,
+                code='BAR',
+                defaults={
+                    'tenant': tenant,
+                    'name': 'Best Available Rate',
+                    'category': 'bar',
+                    'is_active': True,
+                }
+            )
+        rate_plan_id = str(rate_plan.id)
+
+        # Resolve base rate for unit type or fallback to 1000.00
+        inv_mapping = RatePlanInventoryType.objects.filter(
+            rate_plan=rate_plan,
+            inventory_unit_type=entry.inventory_unit_type
+        ).first()
+        base_rate = float(inv_mapping.base_rate) if inv_mapping and inv_mapping.base_rate else 1000.0
+
+        nightly_rates = []
+        curr_d = entry.check_in_date
+        while curr_d < entry.check_out_date:
+            nightly_rates.append({
+                'date': curr_d.strftime('%Y-%m-%d'),
+                'amount': base_rate,
+            })
+            curr_d += timedelta(days=1)
+        if not nightly_rates:
+            nightly_rates.append({
+                'date': entry.check_in_date.strftime('%Y-%m-%d'),
+                'amount': base_rate,
+            })
         
         booking_data = {
             'primary_guest_id': guest.id,
@@ -1697,6 +1736,7 @@ class WaitlistViewSet(viewsets.ModelViewSet):
                     'adult_count': 2,
                     'child_count': 0,
                     'rate_plan_id': rate_plan_id,
+                    'nightly_rates': nightly_rates,
                 }
             ]
         }
