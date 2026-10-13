@@ -371,7 +371,7 @@ class ServiceSerializer(serializers.ModelSerializer):
             tenant = resolve_request_tenant(request)
             if tenant and len(category_val) != 36:
                 cat_name = category_val.strip()
-                cat_obj = ServiceCategory.objects.filter(tenant=tenant, name__iexact=cat_name).first()
+                cat_obj = ServiceCategory.objects.all_with_deleted().filter(tenant=tenant, name__iexact=cat_name).first()
                 if not cat_obj:
                     try:
                         cat_obj = ServiceCategory.objects.create(
@@ -380,8 +380,11 @@ class ServiceSerializer(serializers.ModelSerializer):
                             created_by=get_request_user(request)
                         )
                     except Exception:
-                        cat_obj = ServiceCategory.objects.filter(tenant=tenant, name__iexact=cat_name).first()
+                        cat_obj = ServiceCategory.objects.all_with_deleted().filter(tenant=tenant, name__iexact=cat_name).first()
                 if cat_obj:
+                    if cat_obj.deleted_at is not None:
+                        cat_obj.deleted_at = None
+                        cat_obj.save(update_fields=['deleted_at', 'updated_at'])
                     data_copy['category'] = str(cat_obj.id)
                 else:
                     data_copy['category'] = None
@@ -396,19 +399,41 @@ class ServiceSerializer(serializers.ModelSerializer):
         tenant = resolve_request_tenant(request)
         name = data.get('name')
         
+        if name:
+            import re
+            trimmed_name = name.strip()
+            if not re.match(r"^[a-zA-Z0-9\s\-_./,()&']+$", trimmed_name):
+                raise serializers.ValidationError({"name": "Description name contains invalid special characters. Only letters, numbers, spaces, and (- _ . / , ( ) & ') are permitted."})
+
         if name and tenant:
-            qs = Service.objects.filter(tenant=tenant, name__iexact=name.strip())
+            qs = Service.objects.all_with_deleted().filter(tenant=tenant, name__iexact=name.strip())
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)
-            if qs.exists():
+            existing = qs.first()
+            if existing and existing.deleted_at is None:
                 raise serializers.ValidationError({"name": "A service with this name already exists."})
                 
         return data
 
     def create(self, validated_data):
         request = self.context.get('request')
-        validated_data['tenant'] = resolve_request_tenant(request)
-        validated_data['created_by'] = get_request_user(request)
+        tenant = resolve_request_tenant(request)
+        created_by = get_request_user(request)
+        validated_data['tenant'] = tenant
+        validated_data['created_by'] = created_by
+
+        name = validated_data.get('name')
+        if name and tenant:
+            soft_deleted = Service.objects.all_with_deleted().filter(
+                tenant=tenant, name__iexact=name.strip(), deleted_at__isnull=False
+            ).first()
+            if soft_deleted:
+                for key, val in validated_data.items():
+                    setattr(soft_deleted, key, val)
+                soft_deleted.deleted_at = None
+                soft_deleted.save()
+                return soft_deleted
+
         return super().create(validated_data)
 
 
