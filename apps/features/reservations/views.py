@@ -38,14 +38,20 @@ class CorporateAccountViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         tenant = getattr(self.request, 'tenant', None)
-        if not tenant and hasattr(self.request.user, 'tenant') and self.request.user.tenant:
-            tenant = self.request.user.tenant
+        user = getattr(self.request, 'user', None)
+        if not tenant and user and hasattr(user, 'tenant') and user.tenant:
+            tenant = user.tenant
         if not tenant:
             from apps.core.tenants.models import Tenant
             tenant = Tenant.objects.first()
-        if not tenant:
-            return CorporateAccount.objects.none()
-        qs = CorporateAccount.objects.filter(tenant=tenant)
+
+        qs = CorporateAccount.objects.all()
+        # If tenant is found and user is not superuser, filter by tenant if matching records exist
+        if tenant and not (user and (getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False))):
+            tenant_qs = qs.filter(tenant=tenant)
+            if tenant_qs.exists():
+                qs = tenant_qs
+
         search = self.request.query_params.get('search', '').strip()
         if search:
             from django.db.models import Q
@@ -64,6 +70,79 @@ class CorporateAccountViewSet(viewsets.ModelViewSet):
             from apps.core.tenants.models import Tenant
             tenant = Tenant.objects.first()
         serializer.save(tenant=tenant)
+
+    @action(detail=True, methods=['get'])
+    def invoices(self, request, pk=None):
+        try:
+            corp_account = self.get_object()
+        except Exception:
+            corp_account = CorporateAccount.objects.filter(pk=pk).first()
+            if not corp_account:
+                return Response({"detail": "Corporate account not found."}, status=status.HTTP_404_NOT_FOUND)
+        from datetime import date
+        today = date.today()
+        corp_reservations = corp_account.reservations.filter(deleted_at__isnull=True).order_by('-booking_date')
+
+        invoices_list = []
+        total_bal = 0.0
+        c_0_30 = 0.0
+        c_31_60 = 0.0
+        c_61_90 = 0.0
+        c_90_plus = 0.0
+
+        for r in corp_reservations:
+            bal = float(r.balance_amount or 0.0)
+            tot = float(r.total_amount or 0.0)
+            paid = float(r.paid_amount or 0.0)
+            ref_date = r.booking_date or r.arrival_date or today
+            diff_days = (today - ref_date).days
+
+            if bal > 0.01:
+                total_bal += bal
+                if diff_days <= 30:
+                    c_0_30 += bal
+                elif diff_days <= 60:
+                    c_31_60 += bal
+                elif diff_days <= 90:
+                    c_61_90 += bal
+                else:
+                    c_90_plus += bal
+
+            status_str = "Paid" if bal <= 0.01 else ("Overdue" if diff_days > 30 else "Pending")
+
+            guest_name = "Corporate Guest"
+            if r.primary_guest:
+                guest_name = f"{r.primary_guest.first_name} {r.primary_guest.last_name}".strip() or r.primary_guest.phone
+
+            invoices_list.append({
+                "id": str(r.id),
+                "invoice_number": f"INV-{r.confirmation_number}",
+                "booking_reference": r.confirmation_number,
+                "guest_name": guest_name,
+                "issued_date": str(ref_date),
+                "arrival_date": str(r.arrival_date) if r.arrival_date else "",
+                "departure_date": str(r.departure_date) if r.departure_date else "",
+                "total_amount": tot,
+                "paid_amount": paid,
+                "balance": bal,
+                "status": status_str,
+                "days_outstanding": max(0, diff_days),
+            })
+
+        return Response({
+            "account_id": str(corp_account.id),
+            "company_name": corp_account.company_name,
+            "credit_limit": float(corp_account.credit_limit),
+            "current_balance": round(total_bal, 2),
+            "ar_aging": {
+                "current": round(c_0_30, 2),
+                "thirtyDays": round(c_31_60, 2),
+                "sixtyDays": round(c_61_90, 2),
+                "ninetyPlusDays": round(c_90_plus, 2),
+                "total": round(total_bal, 2),
+            },
+            "invoices": invoices_list,
+        })
 
 
 

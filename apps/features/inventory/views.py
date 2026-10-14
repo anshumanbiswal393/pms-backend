@@ -259,7 +259,14 @@ class InventoryMediaViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
             return InventoryMedia.objects.none()
-        return InventoryMedia.objects.filter(tenant=tenant)
+        qs = InventoryMedia.objects.filter(tenant=tenant)
+        unit_type = self.request.query_params.get('inventory_unit_type')
+        if unit_type:
+            qs = qs.filter(inventory_unit_type_id=unit_type)
+        unit = self.request.query_params.get('inventory_unit')
+        if unit:
+            qs = qs.filter(inventory_unit_id=unit)
+        return qs
 
     @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def upload(self, request):

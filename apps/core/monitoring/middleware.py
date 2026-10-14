@@ -149,11 +149,10 @@ class ApplicationLoggingMiddleware:
             except Exception:
                 pass
 
-        # 1. Log to ApplicationLog Table (Skip high-frequency polling reads to preserve DB throughput)
+        # 1. Log to ApplicationLog Table (Skip standard successful GET reads to preserve DB throughput and maximize responsiveness)
         skip_logging = (
             request.method == 'GET'
             and response.status_code < 400
-            and path.startswith(('/api/notifications/', '/api/rates/calendar/'))
         )
         if not skip_logging:
             try:

@@ -31,6 +31,10 @@ class ReservationExtraChargeSerializer(serializers.ModelSerializer):
 class CorporateAccountSerializer(serializers.ModelSerializer):
     rate_code = serializers.CharField(source='negotiated_rate_code', required=False, allow_blank=True)
     negotiated_rate_code = serializers.CharField(required=False, allow_blank=True)
+    gst_number = serializers.CharField(source='tax_id', required=False, allow_blank=True)
+    email = serializers.EmailField(source='contact_email', required=False, allow_blank=True)
+    phone = serializers.CharField(source='contact_phone', required=False, allow_blank=True)
+    contact = serializers.CharField(source='contact_person', required=False, allow_blank=True)
 
     class Meta:
         model = CorporateAccount
@@ -40,6 +44,16 @@ class CorporateAccountSerializer(serializers.ModelSerializer):
     def to_internal_value(self, data):
         if isinstance(data, dict):
             mutable_data = data.copy() if hasattr(data, 'copy') else dict(data)
+            # Support aliases
+            if 'gst_number' in mutable_data and not mutable_data.get('tax_id'):
+                mutable_data['tax_id'] = mutable_data['gst_number']
+            if 'email' in mutable_data and not mutable_data.get('contact_email'):
+                mutable_data['contact_email'] = mutable_data['email']
+            if 'phone' in mutable_data and not mutable_data.get('contact_phone'):
+                mutable_data['contact_phone'] = mutable_data['phone']
+            if 'contact' in mutable_data and not mutable_data.get('contact_person'):
+                mutable_data['contact_person'] = mutable_data['contact']
+
             # Support both negotiated_rate_code and rate_code alias
             code_val = mutable_data.get('negotiated_rate_code') or mutable_data.get('rate_code')
             if not code_val or not str(code_val).strip():
@@ -55,6 +69,61 @@ class CorporateAccountSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         ret['rate_code'] = instance.negotiated_rate_code
+        ret['gst_number'] = instance.tax_id or ''
+        ret['email'] = instance.contact_email or ''
+        ret['phone'] = instance.contact_phone or ''
+        ret['contact'] = instance.contact_person or ''
+
+        # Dynamic calculated fields from associated reservations
+        try:
+            from datetime import date
+            today = date.today()
+            corp_reservations = instance.reservations.filter(deleted_at__isnull=True)
+            
+            total_rev = 0.0
+            total_bal = 0.0
+            nights_count = 0
+            open_inv = 0
+            c_0_30 = 0.0
+            c_31_60 = 0.0
+            c_61_90 = 0.0
+            c_90_plus = 0.0
+
+            for r in corp_reservations:
+                bal = float(r.balance_amount or 0.0)
+                tot = float(r.total_amount or 0.0)
+                total_rev += tot
+                if bal > 0.01:
+                    total_bal += bal
+                    open_inv += 1
+                    ref_date = r.booking_date or r.arrival_date or today
+                    diff_days = (today - ref_date).days
+                    if diff_days <= 30:
+                        c_0_30 += bal
+                    elif diff_days <= 60:
+                        c_31_60 += bal
+                    elif diff_days <= 90:
+                        c_61_90 += bal
+                    else:
+                        c_90_plus += bal
+
+                if r.arrival_date and r.departure_date:
+                    nights_count += max(1, (r.departure_date - r.arrival_date).days)
+
+            ret['revenue_mtd'] = total_rev
+            ret['room_nights_mtd'] = nights_count
+            ret['open_invoices'] = open_inv
+            ret['current_balance'] = total_bal
+            ret['ar_aging'] = {
+                'current': round(c_0_30, 2),
+                'thirtyDays': round(c_31_60, 2),
+                'sixtyDays': round(c_61_90, 2),
+                'ninetyPlusDays': round(c_90_plus, 2),
+                'total': round(total_bal, 2)
+            }
+        except Exception:
+            pass
+
         return ret
 
 

@@ -413,6 +413,17 @@ class InventoryMediaSerializer(serializers.ModelSerializer):
         validated_data['created_by'] = request.user if request and request.user.is_authenticated else None
         return super().create(validated_data)
 
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        url = instance.media_url or ''
+        request = self.context.get('request')
+        if url.startswith('/') and request:
+            url = request.build_absolute_uri(url)
+        ret['url'] = url
+        ret['media_url'] = url
+        ret['file'] = url
+        return ret
+
 
 class BuildingSerializer(serializers.ModelSerializer):
     class Meta:

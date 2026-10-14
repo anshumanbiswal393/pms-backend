@@ -46,6 +46,10 @@ class CorporateAccount(BaseModel):
     credit_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     open_invoices_count = models.IntegerField(default=0)
     contact_person = models.CharField(max_length=120, null=True, blank=True)
+    contact_email = models.EmailField(null=True, blank=True)
+    contact_phone = models.CharField(max_length=32, null=True, blank=True)
+    tax_id = models.CharField(max_length=64, null=True, blank=True)
+    address = models.CharField(max_length=255, null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:
