@@ -17,6 +17,10 @@ GROUP_BLOCK_TYPE_CHOICES = (
 )
 GROUP_BLOCK_STATUS_CHOICES = (
     ('OPEN', 'Open'),
+    ('DEFINITE', 'Definite'),
+    ('TENTATIVE', 'Tentative'),
+    ('CHECKED_IN', 'Checked-In'),
+    ('CHECKED_OUT', 'Checked-Out'),
     ('CLOSED', 'Closed'),
     ('RELEASED', 'Released'),
     ('CANCELLED', 'Cancelled'),
