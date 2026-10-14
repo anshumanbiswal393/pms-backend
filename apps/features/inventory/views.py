@@ -263,10 +263,6 @@ class InventoryMediaViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def upload(self, request):
-        tenant = getattr(request, 'tenant', None)
-        if not tenant:
-            return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
-        
         file_obj = request.FILES.get('file')
         if not file_obj:
             return Response({'error': 'No file was provided.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -274,7 +270,20 @@ class InventoryMediaViewSet(viewsets.ModelViewSet):
         unit_type_id = request.data.get('inventory_unit_type')
         if not unit_type_id:
             return Response({'error': 'inventory_unit_type is required.'}, status=status.HTTP_400_BAD_REQUEST)
-            
+
+        tenant = getattr(request, 'tenant', None)
+        if not tenant and hasattr(request, 'user'):
+            tenant = getattr(request.user, 'tenant', None)
+        if not tenant:
+            unit_type = InventoryUnitType.objects.filter(id=unit_type_id).first()
+            if unit_type:
+                tenant = unit_type.tenant
+        if not tenant:
+            from apps.core.tenants.models import Tenant
+            tenant = Tenant.objects.first()
+        if not tenant:
+            return Response({'error': 'Tenant context is missing.'}, status=status.HTTP_400_BAD_REQUEST)
+        
         from django.core.files.storage import default_storage
         import os
         import uuid

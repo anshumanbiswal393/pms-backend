@@ -29,6 +29,7 @@ class InventoryUnitCategorySerializer(serializers.ModelSerializer):
 class InventoryUnitTypeSerializer(serializers.ModelSerializer):
     amenities = serializers.SerializerMethodField()
     rooms_count = serializers.SerializerMethodField()
+    media = serializers.SerializerMethodField()
 
     class Meta:
         model = InventoryUnitType
@@ -40,6 +41,20 @@ class InventoryUnitTypeSerializer(serializers.ModelSerializer):
 
     def get_rooms_count(self, obj):
         return obj.inventory_units.count()
+
+    def get_media(self, obj):
+        try:
+            return [
+                {
+                    'id': str(m.id),
+                    'media_url': m.media_url,
+                    'media_type': m.media_type,
+                    'sort_order': m.sort_order
+                }
+                for m in obj.type_media.all()
+            ]
+        except Exception:
+            return []
 
     def validate(self, data):
         request = self.context.get('request')

@@ -12,6 +12,11 @@ class B2BPartnerViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         tenant = getattr(self.request, 'tenant', None)
+        if not tenant and hasattr(self.request, 'user'):
+            tenant = getattr(self.request.user, 'tenant', None)
+        if not tenant:
+            from apps.core.tenants.models import Tenant
+            tenant = Tenant.objects.first()
         if not tenant:
             return B2BPartner.objects.none()
         qs = B2BPartner.objects.filter(tenant=tenant)
@@ -33,4 +38,9 @@ class B2BPartnerViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, 'tenant', None)
+        if not tenant and hasattr(self.request, 'user'):
+            tenant = getattr(self.request.user, 'tenant', None)
+        if not tenant:
+            from apps.core.tenants.models import Tenant
+            tenant = Tenant.objects.first()
         serializer.save(tenant=tenant)

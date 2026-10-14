@@ -67,6 +67,7 @@ class B2BPartnerSerializer(serializers.ModelSerializer):
             digits = digits[2:]
         if len(digits) != 10:
             raise serializers.ValidationError("Phone number must be exactly 10 digits.")
+        return digits
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         
