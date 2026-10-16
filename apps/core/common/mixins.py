@@ -16,6 +16,12 @@ def invalidate_viewset_cache(basename: str, tenant_id: str = None):
         cache.delete(keys_set_name)
     except Exception:
         pass
+    try:
+        if hasattr(cache, 'delete_pattern'):
+            cache.delete_pattern(f"*{prefix}*")
+            cache.delete_pattern(f"*{basename}*")
+    except Exception:
+        pass
 
 class RedisCacheMixin:
     """

@@ -75,15 +75,14 @@ class CleaningTaskViewSet(HousekeepingBaseViewSet):
         created_tasks = []
 
         for room_id in room_ids:
-            try:
-                room = InventoryUnit.objects.get(id=room_id, tenant=tenant)
-            except InventoryUnit.DoesNotExist:
+            room = InventoryUnit.objects.filter(id=room_id, tenant=tenant).first()
+            if not room:
                 continue
 
             if housekeeping_status and housekeeping_status != "No change":
                 room.housekeeping_status = housekeeping_status.lower()
                 room.save(update_fields=['housekeeping_status'])
-                updated_rooms.append(room.id)
+                updated_rooms.append(str(room.id))
 
             task = CleaningTask.objects.filter(
                 room=room,
@@ -107,12 +106,19 @@ class CleaningTaskViewSet(HousekeepingBaseViewSet):
                         completed_at=timezone.now() if housekeeping_status == 'clean' else None,
                         priority='ROUTINE'
                     )
-                created_tasks.append(task.id)
+                created_tasks.append(str(task.id))
             elif housekeeping_status == 'clean' and task:
                 task.status = 'COMPLETED'
                 task.completed_at = timezone.now()
                 task.save()
-                created_tasks.append(task.id)
+                created_tasks.append(str(task.id))
+
+        # Explicitly invalidate unit cache in Redis for this tenant
+        try:
+            from apps.core.common.mixins import invalidate_viewset_cache
+            invalidate_viewset_cache('unit', str(tenant.id))
+        except Exception:
+            pass
 
         return Response({
             "message": f"Successfully updated {len(updated_rooms)} rooms and updated/created {len(created_tasks)} tasks.",

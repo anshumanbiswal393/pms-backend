@@ -88,6 +88,14 @@ class InventoryUnit(BaseModel):
     def __str__(self):
         return f"{self.name} ({self.inventory_unit_type.code})"
 
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        try:
+            from apps.core.common.mixins import invalidate_viewset_cache
+            invalidate_viewset_cache('unit', str(self.tenant_id) if self.tenant_id else None)
+        except Exception:
+            pass
+
 
 class InventoryRelationship(BaseModel):
     RELATION_TYPE_CHOICES = (
