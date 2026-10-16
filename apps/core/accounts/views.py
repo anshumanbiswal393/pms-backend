@@ -428,11 +428,11 @@ class RequestOTPView(APIView):
         if not contact:
             return Response({'error': 'Provide email or phone contact.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        success, msg = AuthService.request_otp(tenant, contact, provider_type)
+        success, msg, code = AuthService.request_otp(tenant, contact, provider_type)
         if not success:
             return Response({'error': msg}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({'message': msg}, status=status.HTTP_200_OK)
+        return Response({'message': msg, 'otp': code, 'otp_code': code}, status=status.HTTP_200_OK)
 
 
 @extend_schema(request=VerifyOTPRequestSerializer, responses={200: dict})

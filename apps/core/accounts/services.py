@@ -216,7 +216,7 @@ class AuthService:
         return user, "Success"
 
     @classmethod
-    def request_otp(cls, tenant, contact: str, provider_type: str = 'mock') -> tuple[bool, str]:
+    def request_otp(cls, tenant, contact: str, provider_type: str = 'mock') -> tuple[bool, str, str | None]:
         """
         Generates and sends an OTP to user phone or email.
         """
@@ -233,14 +233,14 @@ class AuthService:
                     deleted_at__isnull=True
                 )
             except AppUser.DoesNotExist:
-                return False, "User not found."
+                return False, "User not found.", None
 
         if not user.is_active:
-            return False, "User account is deactivated."
+            return False, "User account is deactivated.", None
 
         is_locked, msg = cls.check_user_lockout(user)
         if is_locked:
-            return False, msg
+            return False, msg, None
 
         # Generate 6-digit numeric OTP code
         code = "".join(random.choices(string.digits, k=6))
@@ -255,9 +255,9 @@ class AuthService:
         dispatched = provider.send_otp(contact, code)
         
         if not dispatched:
-            return False, "Failed to send OTP code. Try again."
+            return False, "Failed to send OTP code. Try again.", None
 
-        return True, "OTP code sent successfully."
+        return True, "OTP code sent successfully.", code
 
     @classmethod
     def verify_otp(cls, tenant, contact: str, otp_code: str, ip_address: str = "127.0.0.1") -> tuple[AppUser | None, str]:

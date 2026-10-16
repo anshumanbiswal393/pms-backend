@@ -71,7 +71,7 @@ class AuthenticationTests(TestCase):
         self.assertTrue('locked' in msg)
 
     def test_otp_request_and_verify(self):
-        success, msg = AuthService.request_otp(self.tenant, 'user@test.com')
+        success, msg, *_ = AuthService.request_otp(self.tenant, 'user@test.com')
         self.assertTrue(success)
         
         self.user.refresh_from_db()
@@ -89,7 +89,7 @@ class AuthenticationTests(TestCase):
         self.assertIsNone(self.user.otp_expires_at)
 
     def test_otp_expiry(self):
-        success, msg = AuthService.request_otp(self.tenant, 'user@test.com')
+        success, msg, *_ = AuthService.request_otp(self.tenant, 'user@test.com')
         self.assertTrue(success)
         
         # Manually expire the code
