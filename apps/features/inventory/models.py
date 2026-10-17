@@ -35,6 +35,11 @@ class InventoryUnitType(BaseModel):
     max_children = models.IntegerField(default=0)
     max_infants = models.IntegerField(default=0)
     is_sellable = models.BooleanField(default=True)
+    
+    # STAAH & PMS Physical Specifications
+    size_measurement = models.CharField(max_length=32, blank=True, default='25', help_text='Room size measurement')
+    size_measurement_unit = models.CharField(max_length=16, blank=True, default='sqm', help_text='Measurement unit (sqm, sqft)')
+    description = models.TextField(blank=True, default='', help_text='Room type description')
 
     class Meta:
         constraints = [

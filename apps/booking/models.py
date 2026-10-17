@@ -87,6 +87,8 @@ class RoomType(models.Model):
     room_images = models.JSONField(default=list, blank=True)  # [{url, caption}]
     amenities = models.JSONField(default=list, blank=True)
     total_rooms = models.IntegerField(default=10)
+    size_measurement = models.CharField(max_length=32, blank=True, default='25', help_text='Room size measurement')
+    size_measurement_unit = models.CharField(max_length=16, blank=True, default='sqm', help_text='Measurement unit (sqm, sqft)')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

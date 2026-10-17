@@ -53,6 +53,22 @@ class StaahRoomMapping(BaseModel):
     
     status = models.CharField(max_length=24, choices=STATUS_CHOICES, default='Mapped')
     ota_mappings = models.JSONField(default=dict, blank=True, help_text='Channel-specific room IDs (Booking.com, Agoda, etc.)')
+    
+    # STAAH OTA_HotelRoom dynamic specifications
+    inventory_unit_type = models.ForeignKey(
+        'inventory.InventoryUnitType',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='staah_mappings',
+        help_text='Linked PMS InventoryUnitType'
+    )
+    room_rate = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, help_text='Base room rate for STAAH RoomRate field')
+    size_measurement = models.CharField(max_length=32, blank=True, default='25', help_text='Room size measurement value')
+    size_measurement_unit = models.CharField(max_length=16, blank=True, default='sqm', help_text='Room size measurement unit (sqm, sqft)')
+    facilities = models.JSONField(default=list, blank=True, help_text='List of facilities/amenities [{"Group": "Amenities", "name": "Free WiFi"}]')
+    description = models.TextField(blank=True, default='', help_text='Room description text for STAAH')
+    
     last_synced_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

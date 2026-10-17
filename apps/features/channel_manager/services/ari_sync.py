@@ -8,6 +8,7 @@ from apps.features.channel_manager.models import (
     StaahRateMapping,
 )
 from apps.features.channel_manager.services.staah_client import StaahSuClient
+from apps.features.rates.models import RatePlanInventoryType
 from apps.booking.models import (
     RoomType as BookingRoomType,
     RatePlan as BookingRatePlan,
@@ -56,6 +57,22 @@ class AriSyncService:
         total_date_entries = 0
 
         for r_map in room_mappings_qs:
+            # Dynamically resolve room rate:
+            # 1. StaahRoomMapping.room_rate
+            # 2. RatePlanInventoryType base_rate
+            # 3. BookingRoomType base_price
+            base_price = None
+            if r_map.room_rate and r_map.room_rate > 0:
+                base_price = float(r_map.room_rate)
+            elif r_map.inventory_unit_type:
+                rp_it = RatePlanInventoryType.objects.filter(
+                    inventory_unit_type=r_map.inventory_unit_type,
+                    is_active=True,
+                    base_rate__gt=0
+                ).first()
+                if rp_it and rp_it.base_rate > 0:
+                    base_price = float(rp_it.base_rate)
+
             # Find corresponding PMS RoomType
             pms_room = BookingRoomType.objects.filter(
                 models_code=r_map.pms_room_code
@@ -66,7 +83,8 @@ class AriSyncService:
             if not pms_room:
                 pms_room = BookingRoomType.objects.filter(is_active=True).first()
 
-            base_price = float(pms_room.base_price) if pms_room else 2500.0
+            if base_price is None:
+                base_price = float(pms_room.base_price) if pms_room else 2500.0
             total_rooms = pms_room.total_rooms if pms_room else 10
 
             # Gather date by date inventory
