@@ -634,6 +634,9 @@ class ReservationListSerializer(serializers.ModelSerializer):
             'primary_guest_id_type', 'primary_guest_id_number', 'primary_guest_id_proof_url', 'primary_guest_nationality', 'primary_guest_tier', 'primary_guest_city', 'primary_guest_address',
             'reservation_source', 'reservation_source_name', 'reservation_source_icon',
             'corporate_account', 'group_block', 'room_allocations', 'room_number', 'rate_plan_name', 'rate_plan_code',
+            'event_venue', 'event_type', 'event_pax', 'event_start_time', 'event_end_time',
+            'event_organizer_name', 'event_organizer_contact', 'event_organizer_email',
+            'event_organizer_billing_address', 'event_seating_arrangement', 'event_catering_menu',
             'invoice_number',
             'created_by_name', 'checked_in_by_name', 'checked_out_at', 'actor_name', 'created_at', 'updated_at'
         ]

@@ -363,6 +363,11 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 mapped_status = status_val.upper().replace('-', '_').replace(' ', '_')
                 qs = qs.filter(status__iexact=mapped_status)
 
+        # Reservation Type filter (e.g. EVENT)
+        res_type = q_params.get('reservation_type')
+        if res_type:
+            qs = qs.filter(reservation_type__iexact=res_type)
+
         ordering = q_params.get('ordering')
         if ordering:
             qs = qs.order_by(ordering)
