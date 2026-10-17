@@ -333,8 +333,14 @@ class PropertyViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         query_params = getattr(self.request, 'query_params', getattr(self.request, 'GET', {}))
         headers = getattr(self.request, 'headers', {})
 
-        # Superuser bypass: allow viewing specific tenant or all if explicitly requested
-        if user and user.is_authenticated and user.is_superuser:
+        # Superuser / Retrod Super Admin bypass: allow viewing specific tenant or all properties
+        is_super = (
+            (user and user.is_authenticated and user.is_superuser) or
+            (getattr(user, 'role', None) and getattr(user.role, 'code', None) in ['super_admin', 'retrod_admin']) or
+            (getattr(user, 'role', None) and getattr(user.role, 'name', None) in ['Super Admin', 'Retrod Super Admin']) or
+            (getattr(user, 'email', '') and str(user.email).lower().endswith('@retrod.in'))
+        )
+        if is_super:
             tenant_param = query_params.get('tenant') or headers.get('X-Tenant-ID')
             if tenant_param:
                 return Property.objects.filter(tenant_id=tenant_param).order_by('-created_at')
@@ -357,6 +363,21 @@ class PropertyViewSet(RedisCacheMixin, viewsets.ModelViewSet):
 
         if tenant:
             return Property.objects.filter(tenant=tenant).order_by('-created_at')
+
+        # Fallback to any properties assigned directly to this user
+        if user and user.is_authenticated:
+            from apps.core.accounts.models import UserAssignment
+            from apps.core.rbac.models import UserPropertyRole
+            assigned_prop_ids = set()
+            for ua in UserAssignment.objects.filter(user=user):
+                if ua.property_id:
+                    assigned_prop_ids.add(ua.property_id)
+            for upr in UserPropertyRole.objects.filter(user=user):
+                if upr.property_id:
+                    assigned_prop_ids.add(upr.property_id)
+
+            if assigned_prop_ids:
+                return Property.objects.filter(id__in=assigned_prop_ids).order_by('-created_at')
 
         return Property.objects.none()
 
