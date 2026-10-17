@@ -24,10 +24,15 @@ class MaintenanceTicketSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         tenant = getattr(request, 'tenant', None)
         prop = data.get('property')
+        unit = data.get('inventory_unit')
+
+        if not prop and unit and getattr(unit, 'property', None):
+            prop = unit.property
+            data['property'] = prop
+
         if prop and prop.tenant != tenant:
             raise serializers.ValidationError("Property must belong to the resolved tenant context.")
         
-        unit = data.get('inventory_unit')
         location = data.get('location')
         if not unit and not location:
             raise serializers.ValidationError("Either a room (inventory unit) or a location must be specified.")

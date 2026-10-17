@@ -28,7 +28,7 @@ class MaintenanceTicket(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='maintenance_tickets')
     property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='maintenance_tickets')
-    reference_number = models.CharField(max_length=32, unique=True, null=True, blank=True)
+    reference_number = models.CharField(max_length=64, unique=True, null=True, blank=True)
     inventory_unit = models.ForeignKey(
         InventoryUnit,
         on_delete=models.SET_NULL,
@@ -60,8 +60,22 @@ class MaintenanceTicket(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.reference_number:
-            count = MaintenanceTicket.objects.filter(tenant=self.tenant).count()
-            self.reference_number = f"WO-{441 + count}"
+            prop_tag = ""
+            if self.property:
+                if getattr(self.property, 'hotel_id', None):
+                    prop_tag = f"{self.property.hotel_id}-"
+                elif getattr(self.property, 'name', None):
+                    clean_name = "".join(filter(str.isalnum, self.property.name)).upper()[:4]
+                    if clean_name:
+                        prop_tag = f"{clean_name}-"
+
+            prop_count = MaintenanceTicket.objects.filter(property=self.property).count() if self.property else MaintenanceTicket.objects.filter(tenant=self.tenant).count()
+            seq = 441 + prop_count
+            candidate = f"WO-{prop_tag}{seq}"
+            while MaintenanceTicket.objects.filter(reference_number=candidate).exists():
+                seq += 1
+                candidate = f"WO-{prop_tag}{seq}"
+            self.reference_number = candidate
         super().save(*args, **kwargs)
 
     def __str__(self):
