@@ -366,7 +366,17 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         # Reservation Type filter (e.g. EVENT)
         res_type = q_params.get('reservation_type')
         if res_type:
-            qs = qs.filter(reservation_type__iexact=res_type)
+            if res_type.upper() == 'EVENT':
+                qs = qs.filter(
+                    models.Q(reservation_type__iexact='EVENT') |
+                    models.Q(market_segment__iexact='Events') |
+                    (models.Q(event_venue__isnull=False) & ~models.Q(event_venue=''))
+                ).exclude(
+                    (models.Q(event_venue__isnull=True) | models.Q(event_venue='')) &
+                    (models.Q(event_type__isnull=True) | models.Q(event_type=''))
+                )
+            else:
+                qs = qs.filter(reservation_type__iexact=res_type)
 
         ordering = q_params.get('ordering')
         if ordering:
