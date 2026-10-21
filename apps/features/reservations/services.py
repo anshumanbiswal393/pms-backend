@@ -131,29 +131,48 @@ def calculate_item_tax(tenant, item_price, per_night_tariff=None, guests_count=1
     from apps.core.common.models import SystemTax
     from django.db.models import Q
     
-    active_rates = SystemTax.objects.filter(
-        Q(tenant=tenant) | Q(tenant__isnull=True),
+    # Prioritize tenant-specific taxes over global taxes
+    tenant_rates = SystemTax.objects.filter(
+        tenant=tenant,
         status__iexact='active'
     )
+    if tenant_rates.exists():
+        active_rates = tenant_rates
+    else:
+        active_rates = SystemTax.objects.filter(
+            tenant__isnull=True,
+            status__iexact='active'
+        )
+
     tariff = Decimal(str(per_night_tariff)) if per_night_tariff is not None else Decimal(str(item_price))
     item_amt = Decimal(str(item_price))
     
     applicable_tax = Decimal('0.00')
     tax_names = []
+    is_room_tax = per_night_tariff is not None
 
     for rate_obj in active_rates:
+        base = (rate_obj.calculation_base or 'folio_subtotal').lower()
+        tax_type = (rate_obj.type or '').lower()
+        has_slab = rate_obj.min_tariff is not None or (rate_obj.max_tariff is not None and rate_obj.max_tariff > Decimal('0.00'))
+
+        # If calculating room tax, skip folio-only taxes that don't apply to room tariff
+        if is_room_tax:
+            if base not in ['room_tariff', 'per_guest_night', 'per_room_night'] and tax_type != 'gst' and not has_slab:
+                continue
+
         # Tariff slab filtering dynamically read from DB columns min_tariff & max_tariff
-        if rate_obj.min_tariff is not None and tariff < rate_obj.min_tariff:
+        min_t = rate_obj.min_tariff if rate_obj.min_tariff is not None else Decimal('0.00')
+        if tariff < min_t:
             continue
         if rate_obj.max_tariff is not None and rate_obj.max_tariff > Decimal('0.00') and tariff > rate_obj.max_tariff:
             continue
 
-        base = (rate_obj.calculation_base or 'folio_subtotal').lower()
         rate_pct = Decimal(str(rate_obj.rate or '0.00'))
         flat_amt = Decimal(str(rate_obj.flat_amount or '0.00'))
 
         tax_item = Decimal('0.00')
-        # If rate percentage is specified (e.g. GST 10%, 15%, 5%), compute percentage of item amount
+        # If rate percentage is specified (e.g. GST 5%, 12%, 18%), compute percentage of item amount
         if rate_pct > Decimal('0.00'):
             tax_item += item_amt * (rate_pct / Decimal('100.0'))
         
@@ -168,6 +187,13 @@ def calculate_item_tax(tenant, item_price, per_night_tariff=None, guests_count=1
 
         if rate_obj.name:
             tax_names.append(rate_obj.name)
+
+    # Fallback if no matching tax was configured in DB
+    if applicable_tax == Decimal('0.00') and not tax_names and not active_rates.exists():
+        fallback_rate = Decimal('18.00') if tariff > Decimal('7500.00') else (Decimal('5.00') if tariff > Decimal('1000.00') else Decimal('0.00'))
+        if fallback_rate > Decimal('0.00'):
+            applicable_tax = item_amt * (fallback_rate / Decimal('100.0'))
+            tax_names.append(f"GST {fallback_rate:.0f}%")
 
     label_str = ", ".join(tax_names) if tax_names else "GST Tax"
     return applicable_tax, label_str
