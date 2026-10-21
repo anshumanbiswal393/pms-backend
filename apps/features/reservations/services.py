@@ -480,6 +480,7 @@ class BookingEngine:
 
         total_amount = Decimal('0.00')
         tax_amount = Decimal('0.00')
+        total_room_discounts = Decimal('0.00')
 
         # Create Allocations and Snapshots
         for alloc_item in booking_data.get('allocations', []):
@@ -673,7 +674,21 @@ class BookingEngine:
                 else:
                     meal_price = meal_plan.price_adjustment
 
-            for rate_day in alloc_item.get('nightly_rates', []):
+            # Calculate allocation discounts
+            nightly_days = alloc_item.get('nightly_rates', [])
+            night_count = len(nightly_days) or 1
+            alloc_room_total = sum(Decimal(str(r.get('amount', 0))) for r in nightly_days)
+            alloc_disc_pct = Decimal(str(alloc_item.get('discount_percent') or alloc_item.get('discountPercent') or 0))
+            alloc_disc_amt = Decimal(str(alloc_item.get('discount_amount') or alloc_item.get('discountAmount') or 0))
+            if alloc_disc_pct > Decimal('0.00') and alloc_disc_amt == Decimal('0.00'):
+                alloc_disc_amt = (alloc_room_total * alloc_disc_pct) / Decimal('100.0')
+            elif alloc_disc_amt > Decimal('0.00') and alloc_disc_pct == Decimal('0.00') and alloc_room_total > Decimal('0.00'):
+                alloc_disc_pct = (alloc_disc_amt / alloc_room_total) * Decimal('100.0')
+            
+            per_night_discount = alloc_disc_amt / Decimal(str(night_count))
+            alloc_tax_pct_val = alloc_item.get('tax_percent') or alloc_item.get('taxPercent')
+
+            for rate_day in nightly_days:
                 version_id = rate_day.get('rate_plan_version_id')
                 rate_version = None
                 if version_id:
@@ -693,7 +708,29 @@ class BookingEngine:
                     )
 
                 amount = Decimal(str(rate_day.get('amount', 0)))
-                
+                discounted_nightly_base = max(Decimal('0.00'), amount - per_night_discount)
+                guest_cnt = allocation.adult_count + allocation.child_count
+
+                if alloc_tax_pct_val is not None and str(alloc_tax_pct_val).strip() != '' and str(alloc_tax_pct_val).strip().lower() != 'none':
+                    try:
+                        pct = Decimal(str(alloc_tax_pct_val))
+                        item_tax_amt = (discounted_nightly_base * pct) / Decimal('100.0')
+                        tax_lbl = f"GST {pct:.0f}%" if pct == pct.to_integral() else f"GST {pct}%"
+                    except Exception:
+                        item_tax_amt, tax_lbl = calculate_item_tax(
+                            tenant=tenant,
+                            item_price=discounted_nightly_base,
+                            per_night_tariff=discounted_nightly_base,
+                            guests_count=guest_cnt
+                        )
+                else:
+                    item_tax_amt, tax_lbl = calculate_item_tax(
+                        tenant=tenant,
+                        item_price=discounted_nightly_base,
+                        per_night_tariff=discounted_nightly_base,
+                        guests_count=guest_cnt
+                    )
+
                 # Setup simple rate/policy snapshot representation
                 rate_snapshot = {
                     'rate_plan_code': rate_plan.code,
@@ -703,6 +740,9 @@ class BookingEngine:
                     'meal_plan_code': meal_plan.code if meal_plan else None,
                     'meal_plan_name': meal_plan.name if meal_plan else None,
                     'meal_plan_price': str(meal_price) if meal_plan else "0.00",
+                    'tax_amount': str(item_tax_amt),
+                    'tax_label': tax_lbl,
+                    'discount_amount': str(per_night_discount),
                 }
                 policy_snapshot = {
                     'cancellation_policy_code': rate_plan.cancellation_policy.code if rate_plan.cancellation_policy else None,
@@ -721,11 +761,8 @@ class BookingEngine:
                 )
 
                 total_amount += amount
-                
-                # Dynamic tax calculation checking DB TaxRates (min_tariff, max_tariff, calculation_base)
-                guest_cnt = allocation.adult_count + allocation.child_count
-                item_tax_amt, _ = calculate_item_tax(tenant=tenant, item_price=amount, per_night_tariff=amount, guests_count=guest_cnt)
                 tax_amount += item_tax_amt
+                total_room_discounts += per_night_discount
 
             # Handle per-allocation Extra Charge (e.g. Extra Person or custom room extra charge)
             extra_charge_val = Decimal(str(alloc_item.get('extra_charge') or alloc_item.get('extraCharge') or 0))
@@ -749,7 +786,11 @@ class BookingEngine:
         packages = booking_data.get('packages', [])
         for pkg_id in packages:
             try:
-                pkg = HospitalityPackage.objects.get(id=pkg_id, tenant=tenant)
+                pkg = HospitalityPackage.objects.filter(id=pkg_id, tenant=tenant).first() or \
+                      HospitalityPackage.objects.filter(name__iexact=str(pkg_id), tenant=tenant).first() or \
+                      HospitalityPackage.objects.filter(id=pkg_id).first()
+                if not pkg:
+                    continue
                 ReservationPackage.objects.create(
                     tenant=tenant,
                     reservation=reservation,
@@ -759,14 +800,19 @@ class BookingEngine:
                 total_amount += pkg.price
                 pkg_tax_amt, _ = calculate_item_tax(tenant=tenant, item_price=pkg.price)
                 tax_amount += pkg_tax_amt
-            except HospitalityPackage.DoesNotExist:
+            except Exception as e:
+                logger.warning(f"Error attaching package {pkg_id}: {e}")
                 continue
 
         # Add services
         services = booking_data.get('services', [])
         for svc_id in services:
             try:
-                svc = Service.objects.get(id=svc_id, tenant=tenant)
+                svc = Service.objects.filter(id=svc_id, tenant=tenant).first() or \
+                      Service.objects.filter(name__iexact=str(svc_id), tenant=tenant).first() or \
+                      Service.objects.filter(id=svc_id).first()
+                if not svc:
+                    continue
                 ReservationServiceAddon.objects.create(
                     tenant=tenant,
                     reservation=reservation,
@@ -776,7 +822,8 @@ class BookingEngine:
                 total_amount += svc.price
                 svc_tax_amt, _ = calculate_item_tax(tenant=tenant, item_price=svc.price)
                 tax_amount += svc_tax_amt
-            except Service.DoesNotExist:
+            except Exception as e:
+                logger.warning(f"Error attaching service addon {svc_id}: {e}")
                 continue
 
         # Add booking-level extra charges
@@ -818,7 +865,7 @@ class BookingEngine:
 
         # Apply coupon
         coupon_code = booking_data.get('coupon_code') or booking_data.get('couponCode')
-        discount_amount = Decimal('0.00')
+        coupon_discount = Decimal('0.00')
         if coupon_code:
             code_str = str(coupon_code).strip()
             coupon = Coupon.objects.filter(tenant=tenant, code__iexact=code_str, is_active=True).first()
@@ -827,9 +874,9 @@ class BookingEngine:
             if coupon:
                 if not coupon.max_uses or coupon.current_uses < coupon.max_uses:
                     if coupon.discount_type == 'FLAT':
-                        discount_amount = coupon.discount_value
+                        coupon_discount = coupon.discount_value
                     elif coupon.discount_type == 'PERCENTAGE':
-                        discount_amount = total_amount * (coupon.discount_value / Decimal('100.0'))
+                        coupon_discount = total_amount * (coupon.discount_value / Decimal('100.0'))
                     
                     ReservationCoupon.objects.create(
                         tenant=tenant,
@@ -839,13 +886,17 @@ class BookingEngine:
                     coupon.current_uses += 1
                     coupon.save()
 
+        # Combine total discounts (room discounts + coupon discount + explicit root discount)
+        explicit_discount = Decimal(str(booking_data.get('discount_amount') or booking_data.get('discountAmount') or '0.00'))
+        total_discount = max(total_room_discounts + coupon_discount, explicit_discount)
+
         reservation.total_amount = total_amount
         reservation.tax_amount = tax_amount
-        reservation.discount_amount = discount_amount
+        reservation.discount_amount = total_discount
 
         paid_val = Decimal(str(booking_data.get('paid_amount') or booking_data.get('paidAmount') or '0.00'))
         reservation.paid_amount = paid_val
-        net_payable = (total_amount + tax_amount) - discount_amount
+        net_payable = (total_amount + tax_amount) - total_discount
         reservation.balance_amount = max(Decimal('0.00'), net_payable - paid_val)
         reservation.status = 'CONFIRMED'
         reservation.save()
@@ -1950,9 +2001,11 @@ class PricingEngine:
 
             # Room discount handling
             alloc_disc_pct = Decimal(str(alloc.get('discount_percent', 0) or 0))
-            alloc_disc_amt = Decimal('0.00')
-            if alloc_disc_pct > Decimal('0.00'):
+            alloc_disc_amt = Decimal(str(alloc.get('discount_amount', 0) or 0))
+            if alloc_disc_pct > Decimal('0.00') and alloc_disc_amt == Decimal('0.00'):
                 alloc_disc_amt = (alloc_total * alloc_disc_pct) / Decimal('100.0')
+            elif alloc_disc_amt > Decimal('0.00') and alloc_disc_pct == Decimal('0.00') and alloc_total > Decimal('0.00'):
+                alloc_disc_pct = (alloc_disc_amt / alloc_total) * Decimal('100.0')
 
             # Combined taxable base for this room allocation
             room_taxable_total = max(
@@ -2025,7 +2078,11 @@ class PricingEngine:
         # Add packages
         for pkg_id in data.get('packages', []):
             try:
-                pkg = HospitalityPackage.objects.get(id=pkg_id, tenant=tenant)
+                pkg = HospitalityPackage.objects.filter(id=pkg_id, tenant=tenant).first() or \
+                      HospitalityPackage.objects.filter(name__iexact=str(pkg_id), tenant=tenant).first() or \
+                      HospitalityPackage.objects.filter(id=pkg_id).first()
+                if not pkg:
+                    continue
                 pkg_tax, _ = calculate_item_tax(tenant=tenant, item_price=pkg.price)
                 breakdown.append({
                     'label': f"Package: {pkg.name}",
@@ -2033,13 +2090,17 @@ class PricingEngine:
                 })
                 total_amount += pkg.price
                 tax_amount += pkg_tax
-            except HospitalityPackage.DoesNotExist:
+            except Exception:
                 pass
                 
         # Add services
         for svc_id in data.get('services', []):
             try:
-                svc = Service.objects.get(id=svc_id, tenant=tenant)
+                svc = Service.objects.filter(id=svc_id, tenant=tenant).first() or \
+                      Service.objects.filter(name__iexact=str(svc_id), tenant=tenant).first() or \
+                      Service.objects.filter(id=svc_id).first()
+                if not svc:
+                    continue
                 svc_tax, _ = calculate_item_tax(tenant=tenant, item_price=svc.price)
                 breakdown.append({
                     'label': f"Service: {svc.name}",
@@ -2047,7 +2108,7 @@ class PricingEngine:
                 })
                 total_amount += svc.price
                 tax_amount += svc_tax
-            except Service.DoesNotExist:
+            except Exception:
                 pass
                 
         # Calculate discount from coupon

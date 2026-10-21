@@ -942,10 +942,12 @@ class CreateBookingSerializer(serializers.Serializer):
     # Extra Items
     extra_charges = serializers.ListField(child=serializers.JSONField(), required=False, default=list)
     extraCharges = serializers.ListField(child=serializers.JSONField(), required=False, default=list)
-    packages = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
-    services = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
+    packages = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    services = serializers.ListField(child=serializers.CharField(), required=False, default=list)
     coupon_code = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     couponCode = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    discount_amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
+    discountAmount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
     paid_amount = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     paidAmount = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     payment_method = serializers.CharField(required=False, allow_blank=True, allow_null=True)
@@ -1021,9 +1023,10 @@ class PriceEstimationSerializer(serializers.Serializer):
     arrival_date = serializers.DateField()
     departure_date = serializers.DateField()
     allocations = serializers.ListField(child=serializers.JSONField())
-    packages = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
-    services = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
+    packages = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    services = serializers.ListField(child=serializers.CharField(), required=False, default=list)
     coupon_code = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    discount_amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
 
 
 class AssignRoomSerializer(serializers.Serializer):
