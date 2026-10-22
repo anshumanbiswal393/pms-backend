@@ -361,7 +361,12 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                     qs = qs.filter(status__in=statuses)
             else:
                 mapped_status = status_val.upper().replace('-', '_').replace(' ', '_')
-                qs = qs.filter(status__iexact=mapped_status)
+                if mapped_status == 'CONFIRMED':
+                    qs = qs.filter(status__in=['CONFIRMED', 'GUARANTEED'])
+                elif mapped_status in ['CHECKED_IN', 'CHECKEDIN']:
+                    qs = qs.filter(status__in=['CHECKED_IN', 'IN_HOUSE'])
+                else:
+                    qs = qs.filter(status__iexact=mapped_status)
 
         # Reservation Type filter (e.g. EVENT)
         res_type = q_params.get('reservation_type')

@@ -547,10 +547,31 @@ def get_reservation_meta(obj):
         if not phone:
             phone = getattr(obj, 'event_organizer_contact', '') or ""
 
-    if first_snap and first_snap.get('email') and first_snap.get('email') != 'guest@example.com':
+    if first_snap and first_snap.get('email') and not first_snap.get('email', '').endswith('@example.com') and not first_snap.get('email', '').startswith('guest_'):
         email = first_snap.get('email')
     if not email:
         email = getattr(obj, 'event_organizer_email', '') or ""
+
+    gb = getattr(obj, 'group_block', None)
+    if gb:
+        if getattr(gb, 'contact_name', None) and (not name or name == "Guest"):
+            name = gb.contact_name
+        if getattr(gb, 'contact_email', None) and (not email or email.endswith('@example.com') or email.startswith('guest_')):
+            email = gb.contact_email
+        if getattr(gb, 'contact_phone', None) and (not phone or phone in ['+91-', '+91', '0000000000']):
+            phone = gb.contact_phone
+        if getattr(gb, 'address', None) and not address:
+            address = gb.address
+        if getattr(gb, 'id_type', None) and not id_type:
+            id_type = gb.id_type
+        if getattr(gb, 'id_number', None) and not id_number:
+            id_number = gb.id_number
+
+    if email and (email.endswith('@example.com') or email.startswith('guest_')):
+        if gb and getattr(gb, 'contact_email', None):
+            email = gb.contact_email
+        else:
+            email = ""
 
     if not address and first_snap:
         address = first_snap.get('address') or first_snap.get('address_line_1') or first_snap.get('city') or ""
@@ -790,6 +811,18 @@ class ReservationSerializer(serializers.ModelSerializer):
             'id', 'tenant', 'confirmation_number', 'total_amount', 'tax_amount',
             'booking_date', 'status', 'created_at', 'updated_at'
         )
+
+    def to_internal_value(self, data):
+        data = data.copy() if hasattr(data, 'copy') else dict(data)
+        if 'special_requests' in data:
+            val = data.get('special_requests')
+            if isinstance(val, list):
+                data['special_requests'] = "\n".join(str(v).strip() for v in val if v)
+            elif val is None:
+                data['special_requests'] = ""
+            else:
+                data['special_requests'] = str(val).strip()
+        return super().to_internal_value(data)
 
     def get_invoice_number(self, obj):
         try:

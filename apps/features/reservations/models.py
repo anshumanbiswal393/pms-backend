@@ -15,8 +15,8 @@ from apps.features.availability.models import (
 )
 
 def generate_reservation_id():
-    """Generates a random, non-sequential 6-digit reservation ID string."""
-    return str(random.randint(100000, 999999))
+    """Generates a random, non-sequential 8-digit reservation ID string."""
+    return str(random.randint(10000000, 99999999))
 
 RESERVATION_STATUS_CHOICES = (
     ('INQUIRY', 'Inquiry'),

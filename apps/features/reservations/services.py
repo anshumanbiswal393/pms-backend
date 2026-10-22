@@ -202,7 +202,7 @@ class BookingEngine:
     @staticmethod
     def generate_confirmation_number():
         while True:
-            candidate = str(random.randint(100000, 999999))
+            candidate = str(random.randint(10000000, 99999999))
             if not Reservation.objects.filter(confirmation_number=candidate).exists():
                 return candidate
 
