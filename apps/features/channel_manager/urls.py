@@ -15,9 +15,11 @@ from apps.features.channel_manager.views import (
     su_rates_view,
     su_push_inventory_view,
     su_update_cell_view,
+    su_inventory_view,
     su_reservation_sync_view,
     su_fetch_reservations_view,
     su_reservation_webhook_view,
+    su_dashboard_view,
 )
 
 router = DefaultRouter()
@@ -36,6 +38,7 @@ urlpatterns = [
     path('mappings/rate-plans/<str:code>', su_update_rate_plan_mapping_view, name='su-update-rate-plan-mapping'),
     
     # ARI (Availability, Rates & Inventory) Endpoints
+    path('inventory', su_inventory_view, name='su-inventory'),
     path('availability', su_availability_view, name='su-availability'),
     path('rates', su_rates_view, name='su-rates'),
     path('sync/availability', su_push_inventory_view, name='su-push-inventory'),
@@ -45,6 +48,10 @@ urlpatterns = [
     path('reservations/sync', su_reservation_sync_view, name='su-reservation-sync'),
     path('reservations/fetch-and-ingest', su_fetch_reservations_view, name='su-fetch-reservations'),
     path('webhook/reservation/', su_reservation_webhook_view, name='su-reservation-webhook'),
+    
+    # Dashboard & Stats (Live from DB)
+    path('dashboard', su_dashboard_view, name='su-dashboard'),
+    path('stats', su_dashboard_view, name='su-stats'),
     
     # DRF Default Router Endpoints
     path('', include(router.urls)),

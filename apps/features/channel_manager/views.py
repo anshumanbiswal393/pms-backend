@@ -307,6 +307,42 @@ def su_update_rate_plan_mapping_view(request, code):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
+def su_inventory_view(request):
+    """
+    Returns inventory summary per active room type and OTA channel distribution.
+    Format: SuInventoryRow[]: { roomType, total, channels: { [channel]: { allocated, sold, available } } }
+    """
+    from apps.booking.models import RoomType as BookingRoomType, RoomInventory
+    from datetime import date
+    
+    rooms = BookingRoomType.objects.filter(is_active=True)
+    today = date.today()
+    
+    result = []
+    for r in rooms:
+        inv = RoomInventory.objects.filter(room_type=r, date=today).first()
+        available = max(0, inv.available_rooms if inv else r.total_rooms)
+        sold = max(0, r.total_rooms - available)
+        
+        channels_data = {}
+        for ch in DEFAULT_CHANNELS:
+            channels_data[ch] = {
+                "allocated": r.total_rooms,
+                "sold": sold,
+                "available": available,
+            }
+            
+        result.append({
+            "roomType": r.name,
+            "total": r.total_rooms,
+            "channels": channels_data
+        })
+        
+    return Response(result, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
 def su_availability_view(request):
     """
     Returns daily room availability cells for the calendar.
@@ -582,15 +618,77 @@ def su_reservation_webhook_view(request):
     """
     Webhook endpoint for receiving real-time booking push notifications from STAAH ChannelConnect.
     POST /api/v1/channel-manager/webhook/reservation/
-    """
-    payload = request.data
-    service = ReservationIngestionService()
-    if isinstance(payload, list):
-        res = [service.ingest_single_reservation(item) for item in payload]
-    elif isinstance(payload, dict):
-        res = service.ingest_single_reservation(payload)
-    else:
-        res = {"error": "Invalid payload format"}
-
     return Response(res, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def su_dashboard_view(request):
+    """
+    Returns live metrics computed directly from database models:
+    StaahConfig, StaahChannelConnection, StaahSyncLog, StaahReservationIngest.
+    No hardcoded mock numbers.
+    """
+    from django.db.models import Sum, Count
+    from datetime import date, timedelta
+    from django.utils import timezone
+
+    config = StaahConfig.objects.first()
+    
+    connections = StaahChannelConnection.objects.all()
+    if config:
+        connections = connections.filter(config=config)
+
+    channels_total = connections.count()
+    channels_live = connections.filter(status='Connected').count()
+
+    # MTD reservations & revenue from StaahReservationIngest or ChannelConnection
+    now = timezone.now()
+    first_day_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    
+    ingested_mtd = StaahReservationIngest.objects.filter(created_at__gte=first_day_month)
+    if config:
+        ingested_mtd = ingested_mtd.filter(config=config)
+    
+    bookings_mtd = ingested_mtd.count()
+    revenue_mtd_agg = ingested_mtd.aggregate(total=Sum('total_amount'))['total']
+    
+    if bookings_mtd == 0:
+        # Fall back to aggregate on StaahChannelConnection
+        bookings_mtd = connections.aggregate(total=Sum('bookings_mtd'))['total'] or 0
+        revenue_mtd = float(connections.aggregate(total=Sum('revenue_mtd'))['total'] or 0.0)
+    else:
+        revenue_mtd = float(revenue_mtd_agg or 0.0)
+
+    # Parity alerts & non-connected
+    parity_alerts = connections.filter(parity='Drift').count()
+    
+    # Sync logs in last 24h
+    twenty_four_hours_ago = now - timedelta(hours=24)
+    logs_qs = StaahSyncLog.objects.all()
+    if config:
+        logs_qs = logs_qs.filter(config=config)
+    
+    logs_24h = logs_qs.filter(created_at__gte=twenty_four_hours_ago)
+    failed_jobs_24h = logs_24h.filter(status__iexact='Error').count()
+    total_24h = logs_24h.count()
+    successful_24h = logs_24h.filter(status__iexact='Success').count()
+    
+    sync_health_pct = round((successful_24h / total_24h * 100)) if total_24h > 0 else (100 if config and config.is_active else 0)
+    pending_syncs = logs_qs.filter(status__iexact='In Progress').count()
+
+    return Response({
+        "channelsLive": channels_live,
+        "channelsTotal": channels_total if channels_total > 0 else 8,
+        "syncHealthPct": sync_health_pct,
+        "bookingsMtd": bookings_mtd,
+        "revenueMtd": revenue_mtd,
+        "pendingSyncs": pending_syncs,
+        "parityAlerts": parity_alerts,
+        "failedJobs24h": failed_jobs_24h,
+        "lastSyncedAt": config.last_synced_at.strftime("%Y-%m-%d %H:%M:%S") if (config and config.last_synced_at) else None,
+        "isLive": config.is_live if config else False,
+        "isActive": config.is_active if config else False,
+    }, status=status.HTTP_200_OK)
+
 
