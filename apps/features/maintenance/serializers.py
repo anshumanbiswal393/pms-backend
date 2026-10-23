@@ -23,8 +23,10 @@ class MaintenanceTicketSerializer(serializers.ModelSerializer):
     def validate(self, data):
         request = self.context.get('request')
         tenant = getattr(request, 'tenant', None)
-        prop = data.get('property')
-        unit = data.get('inventory_unit')
+        instance = getattr(self, 'instance', None)
+
+        prop = data.get('property') or (getattr(instance, 'property', None) if instance else None)
+        unit = data.get('inventory_unit') or (getattr(instance, 'inventory_unit', None) if instance else None)
 
         if not prop and unit and getattr(unit, 'property', None):
             prop = unit.property
@@ -33,16 +35,16 @@ class MaintenanceTicketSerializer(serializers.ModelSerializer):
         if prop and prop.tenant != tenant:
             raise serializers.ValidationError("Property must belong to the resolved tenant context.")
         
-        location = data.get('location')
+        location = data.get('location') or (getattr(instance, 'location', None) if instance else None)
         if not unit and not location:
             raise serializers.ValidationError("Either a room (inventory unit) or a location must be specified.")
 
-        if unit and unit.property != prop:
+        if unit and prop and unit.property != prop:
             raise serializers.ValidationError("Inventory unit must belong to the target property.")
 
         # Ensure start_date and end_date are resolved and checked for conflicts
-        start_date = data.get('start_date')
-        end_date = data.get('end_date')
+        start_date = data.get('start_date') or (getattr(instance, 'start_date', None) if instance else None)
+        end_date = data.get('end_date') or (getattr(instance, 'end_date', None) if instance else None)
 
         if not start_date or not end_date:
             import re
