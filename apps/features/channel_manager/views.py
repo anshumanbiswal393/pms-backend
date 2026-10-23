@@ -42,7 +42,7 @@ def get_active_staah_config(request):
     X-Property-ID header or query param.
     """
     tenant = getattr(request, 'tenant', None)
-    prop_id = request.headers.get('X-Property-ID') or request.query_params.get('property') or request.data.get('property_id')
+    prop_id = request.headers.get('X-Property-ID') or request.query_params.get('property') or (request.data.get('property_id') if hasattr(request, 'data') else None)
 
     qs = StaahConfig.objects.all()
     if tenant:
@@ -70,14 +70,17 @@ def get_scoped_rooms_and_property(request):
     from apps.booking.models import RoomType as BookingRoomType, Hotel
 
     tenant = getattr(request, 'tenant', None)
-    prop_id = request.headers.get('X-Property-ID') or request.query_params.get('property') or request.data.get('property_id')
+    prop_id = request.headers.get('X-Property-ID') or request.query_params.get('property') or (request.data.get('property_id') if hasattr(request, 'data') else None)
 
     property_obj = None
     if prop_id:
         p_qs = Property.objects.all()
         if tenant:
             p_qs = p_qs.filter(tenant=tenant)
-        property_obj = p_qs.filter(id=prop_id).first()
+        try:
+            property_obj = p_qs.filter(id=prop_id).first()
+        except Exception:
+            property_obj = None
 
     if not property_obj and tenant:
         property_obj = Property.objects.filter(tenant=tenant).first()
@@ -93,9 +96,15 @@ def get_scoped_rooms_and_property(request):
     # 1. Fetch InventoryUnitTypes belonging to this property
     unit_types = list(InventoryUnitType.objects.filter(property=property_obj, deleted_at__isnull=True))
 
-    # 2. Find any matching Hotel in booking models
-    hotel = Hotel.objects.filter(slug__iexact=str(property_obj.hotel_id)).first() or Hotel.objects.filter(name__iexact=property_obj.name).first()
-    booking_rooms = {r.name.strip().lower(): r for r in (BookingRoomType.objects.filter(hotel=hotel, is_active=True) if hotel else BookingRoomType.objects.filter(is_active=True))}
+    # 2. Find matching Hotel in booking models for this property
+    hotel = (
+        Hotel.objects.filter(slug__iexact=str(property_obj.hotel_id)).first()
+        or Hotel.objects.filter(name__iexact=property_obj.name).first()
+    )
+    booking_rooms = {
+        r.name.strip().lower(): r 
+        for r in (BookingRoomType.objects.filter(hotel=hotel, is_active=True) if hotel else BookingRoomType.objects.none())
+    }
 
     room_items = []
     if unit_types:
@@ -455,7 +464,6 @@ def su_update_rate_plan_mapping_view(request, code):
 def su_inventory_view(request):
     """
     Returns inventory summary per active room type and OTA channel distribution.
-    Format: SuInventoryRow[]: { roomType, total, channels: { [channel]: { allocated, sold, available } } }
     Filtered strictly to active tenant's property.
     """
     from apps.booking.models import RoomInventory
@@ -886,6 +894,5 @@ def su_dashboard_view(request):
         "isLive": config.is_live if config else False,
         "isActive": config.is_active if config else False,
     }, status=status.HTTP_200_OK)
-
 
 
