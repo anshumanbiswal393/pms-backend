@@ -23,16 +23,23 @@ from apps.features.channel_manager.services.staah_client import StaahSuClient
 from apps.features.channel_manager.services.mapping_service import MappingService
 from apps.features.channel_manager.services.reservation_engine import ReservationIngestionService
 
-DEFAULT_CHANNELS = [
-    "Booking.com",
-    "Agoda",
-    "Expedia",
-    "Airbnb",
-    "MakeMyTrip",
-    "Goibibo",
-    "HotelBeds",
-    "Trip.com",
-]
+def get_active_channels(config=None):
+    """
+    Returns the list of active channel names dynamically configured for the property/tenant
+    from StaahChannelConnection records.
+    """
+    channels = []
+    if config:
+        channels = list(
+            StaahChannelConnection.objects.filter(config=config)
+            .values_list('channel_name', flat=True)
+            .distinct()
+        )
+    if not channels:
+        channels = list(
+            StaahChannelConnection.objects.values_list('channel_name', flat=True).distinct()
+        )
+    return channels
 
 
 def get_active_staah_config(request):
@@ -348,12 +355,15 @@ def su_room_mappings_view(request):
     # Ensure catalog is synced
     MappingService(config).sync_pms_catalog_to_mappings()
 
+    active_channels = get_active_channels(config)
     mappings = StaahRoomMapping.objects.filter(config=config)
     result = []
     for m in mappings:
         channels_dict = {}
-        for ch in DEFAULT_CHANNELS:
-            ch_data = m.ota_mappings.get(ch, {})
+        # Collect channels from active connections or mapping's saved OTA mappings
+        channel_keys = list(dict.fromkeys(active_channels + list((m.ota_mappings or {}).keys())))
+        for ch in channel_keys:
+            ch_data = m.ota_mappings.get(ch, {}) if m.ota_mappings else {}
             channels_dict[ch] = {
                 "otaRoomId": ch_data.get("otaRoomId", m.staah_room_id or "—"),
                 "otaRoomName": ch_data.get("otaRoomName", m.staah_room_name or m.pms_room_name),
@@ -410,12 +420,14 @@ def su_rate_plan_mappings_view(request):
 
     MappingService(config).sync_pms_catalog_to_mappings()
 
+    active_channels = get_active_channels(config)
     mappings = StaahRateMapping.objects.filter(config=config)
     result = []
     for m in mappings:
         channels_dict = {}
-        for ch in DEFAULT_CHANNELS:
-            ch_data = m.ota_mappings.get(ch, {})
+        channel_keys = list(dict.fromkeys(active_channels + list((m.ota_mappings or {}).keys())))
+        for ch in channel_keys:
+            ch_data = m.ota_mappings.get(ch, {}) if m.ota_mappings else {}
             channels_dict[ch] = {
                 "otaRatePlanId": ch_data.get("otaRatePlanId", m.staah_rate_id or "—"),
                 "status": ch_data.get("status", m.status),
@@ -469,6 +481,8 @@ def su_inventory_view(request):
     from apps.booking.models import RoomInventory
     from datetime import date
     
+    config = get_active_staah_config(request)
+    active_channels = get_active_channels(config)
     _, rooms = get_scoped_rooms_and_property(request)
     today = date.today()
     
@@ -481,7 +495,7 @@ def su_inventory_view(request):
         sold = max(0, total_rooms - available)
         
         channels_data = {}
-        for ch in DEFAULT_CHANNELS:
+        for ch in active_channels:
             channels_data[ch] = {
                 "allocated": total_rooms,
                 "sold": sold,
