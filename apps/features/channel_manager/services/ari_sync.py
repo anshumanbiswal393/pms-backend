@@ -87,6 +87,11 @@ class AriSyncService:
                 base_price = float(pms_room.base_price) if pms_room else 2500.0
             total_rooms = pms_room.total_rooms if pms_room else 10
 
+            # Fetch extra adult and child rates dynamically from RatePlan if available
+            pms_rate_plan = BookingRatePlan.objects.filter(room_type=pms_room).first() if pms_room else None
+            extra_adult = float(pms_rate_plan.extra_adult_price) if (pms_rate_plan and pms_rate_plan.extra_adult_price) else 0.0
+            extra_child = float(pms_rate_plan.extra_child_price) if (pms_rate_plan and pms_rate_plan.extra_child_price) else 0.0
+
             # Gather date by date inventory
             curr_date = date_from
             date_entries = []
@@ -123,8 +128,8 @@ class AriSyncService:
                     "maximumstay": str(max_los),
                     "closedonarrival": "1" if cta else "0",
                     "closedondeparture": "1" if ctd else "0",
-                    "extraadultrate": "800.00",
-                    "extrachildrate": "500.00"
+                    "extraadultrate": f"{extra_adult:.2f}",
+                    "extrachildrate": f"{extra_child:.2f}"
                 })
 
                 total_date_entries += 1

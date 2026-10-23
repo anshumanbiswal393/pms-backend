@@ -4,6 +4,7 @@ from django.dispatch import receiver
 from apps.booking.models import Booking, RoomInventory
 from apps.features.channel_manager.services.ari_sync import AriSyncService
 
+
 logger = logging.getLogger(__name__)
 
 @receiver(post_save, sender=Booking)
