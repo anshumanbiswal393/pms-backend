@@ -635,6 +635,8 @@ class ReservationListSerializer(serializers.ModelSerializer):
     actor_name = serializers.SerializerMethodField()
     rate_plan_name = serializers.SerializerMethodField()
     rate_plan_code = serializers.SerializerMethodField()
+    is_held = serializers.BooleanField(read_only=True)
+    remaining_hold_seconds = serializers.IntegerField(read_only=True)
 
     property_business_date = serializers.SerializerMethodField()
     checked_in_by_name = serializers.SerializerMethodField()
@@ -649,6 +651,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'property', 'property_name', 'property_business_date', 'confirmation_number', 'reservation_number', 'confirmation_code', 'booking_reference', 'status', 'reservation_type',
             'market_segment', 'booking_date', 'arrival_date', 'departure_date',
+            'held_until', 'is_held', 'remaining_hold_seconds', 'idempotency_key',
             'check_in_time', 'check_out_time', 'adults', 'children', 'total_pax',
             'total_amount', 'tax_amount', 'discount_amount', 'paid_amount', 'balance_amount', 'grand_total',
             'primary_guest', 'primary_guest_name', 'primary_guest_phone', 'primary_guest_email',
@@ -803,6 +806,8 @@ class ReservationSerializer(serializers.ModelSerializer):
     reservation_number = serializers.CharField(source='confirmation_number', read_only=True)
     confirmation_code = serializers.CharField(source='confirmation_number', read_only=True)
     invoice_number = serializers.SerializerMethodField()
+    is_held = serializers.BooleanField(read_only=True)
+    remaining_hold_seconds = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Reservation
@@ -995,6 +1000,11 @@ class CreateBookingSerializer(serializers.Serializer):
     corporate_cost_center = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     corporate_gst_number = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     corporate_travel_purpose = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    # Concurrency, Hold & Idempotency
+    is_hold = serializers.BooleanField(required=False, default=False)
+    hold_duration_minutes = serializers.IntegerField(required=False, default=5, min_value=1, max_value=60)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     def validate_corporate_po_ref(self, value):
         if value:

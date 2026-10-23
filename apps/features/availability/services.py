@@ -115,6 +115,16 @@ class RestrictionService:
 class AvailabilityCalendarService:
     @staticmethod
     def get_calendar(tenant, property_id, start_date, end_date, unit_type_id=None):
+        from apps.features.reservations.concurrency import AvailabilityCacheService
+        cached_result = AvailabilityCacheService.get_cached_calendar(
+            property_id=str(property_id),
+            start_date=start_date,
+            end_date=end_date,
+            unit_type_id=str(unit_type_id) if unit_type_id else None
+        )
+        if cached_result is not None:
+            return cached_result
+
         unit_types = InventoryUnitType.objects.filter(tenant=tenant, property_id=property_id)
         if unit_type_id:
             unit_types = unit_types.filter(id=unit_type_id)
@@ -190,6 +200,14 @@ class AvailabilityCalendarService:
                 })
             curr_date += timedelta(days=1)
             
+        AvailabilityCacheService.set_cached_calendar(
+            property_id=str(property_id),
+            start_date=start_date,
+            end_date=end_date,
+            calendar_data=calendar,
+            ttl=120,
+            unit_type_id=str(unit_type_id) if unit_type_id else None
+        )
         return calendar
 
 

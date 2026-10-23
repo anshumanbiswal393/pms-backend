@@ -31,6 +31,11 @@ from apps.features.reservations.services import (
 )
 from apps.core.tenants.models import Property
 from apps.core.common.mixins import RedisCacheMixin
+from apps.core.common.idempotency import IdempotencyManager
+from apps.features.reservations.concurrency import (
+    ReservationHoldManager, ReservationRushQueue, RushQueueOverwhelmedException,
+    AvailabilityCacheService
+)
 
 class CorporateAccountViewSet(viewsets.ModelViewSet):
     serializer_class = CorporateAccountSerializer
@@ -491,22 +496,65 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
 
         serializer = CreateBookingSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        validated_data = serializer.validated_data
+
+        # 5th Requirement: Idempotency Key check (prevents double bookings and double payments on retries)
+        idempotency_key = IdempotencyManager.extract_key(request, validated_data.get('idempotency_key'))
+        if idempotency_key:
+            validated_data['idempotency_key'] = idempotency_key
+            is_processing, cached_response = IdempotencyManager.check(idempotency_key)
+            if is_processing:
+                return Response(
+                    {'error': 'A booking with this idempotency key is already in progress. Please do not retry concurrently.'},
+                    status=status.HTTP_409_CONFLICT
+                )
+            if cached_response is not None:
+                return Response(
+                    cached_response.get('data'),
+                    status=cached_response.get('status', status.HTTP_201_CREATED)
+                )
+
+        # 3rd Requirement: Queue Before Rush (Semaphore / FIFO queue protecting capacity & DB during flash sales)
+        allocs = validated_data.get('allocations', [])
+        first_unit_type = allocs[0].get('inventory_unit_type_id') if allocs else None
 
         try:
-            reservation = BookingEngine.create_booking(
-                tenant=tenant,
-                property_obj=property_obj,
-                booking_data=serializer.validated_data,
-                user=request.user
+            with ReservationRushQueue.acquire_rush_slot(property_id=str(property_obj.id), unit_type_id=first_unit_type):
+                reservation = BookingEngine.create_booking(
+                    tenant=tenant,
+                    property_obj=property_obj,
+                    booking_data=validated_data,
+                    user=request.user
+                )
+        except RushQueueOverwhelmedException as e:
+            if idempotency_key:
+                IdempotencyManager.clear(idempotency_key)
+            return Response(
+                {'error': str(e), 'code': 'RUSH_QUEUE_OVERWHELMED'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+                headers={'Retry-After': '2'}
             )
         except (serializers.ValidationError, DjangoValidationError) as e:
+            if idempotency_key:
+                IdempotencyManager.clear(idempotency_key)
             detail = e.messages if hasattr(e, 'messages') else (e.detail if hasattr(e, 'detail') else str(e))
             if isinstance(detail, list) and len(detail) == 1:
                 detail = detail[0]
             return Response({'error': detail, 'detail': detail}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            if idempotency_key:
+                IdempotencyManager.clear(idempotency_key)
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
         self._invalidate_cache()
         output = self.get_serializer(reservation)
-        return Response(output.data, status=status.HTTP_201_CREATED)
+        response_data = output.data
+
+        # Store completed result in idempotency cache
+        if idempotency_key:
+            IdempotencyManager.complete(idempotency_key, response_data, status_code=status.HTTP_201_CREATED)
+
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
     @extend_schema(
         parameters=[
@@ -754,6 +802,40 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         self._invalidate_cache()
         output = self.get_serializer(updated)
         return Response(output.data, status=status.HTTP_200_OK)
+
+    @extend_schema(request=None, responses={200: ReservationSerializer})
+    @action(detail=True, methods=['post'], url_path='confirm-hold')
+    def confirm_hold(self, request, pk=None):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reservation = self.get_object()
+        try:
+            confirmed_res = ReservationHoldManager.confirm_hold(
+                reservation=reservation,
+                user=request.user
+            )
+        except DjangoValidationError as e:
+            handle_django_validation_error(e)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        self._invalidate_cache()
+        output = self.get_serializer(confirmed_res)
+        return Response(output.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='release-expired-holds')
+    def release_expired_holds(self, request):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'Tenant context missing.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        property_id = request.headers.get('X-Property-ID') or request.query_params.get('property_id')
+        count = ReservationHoldManager.release_expired_holds(tenant=tenant, property_id=property_id)
+        if count > 0:
+            self._invalidate_cache()
+        return Response({'released_count': count, 'status': 'success'}, status=status.HTTP_200_OK)
 
     @extend_schema(request=ModifyRemarksSerializer, responses={200: ReservationSerializer})
     @action(detail=True, methods=['post'], url_path='modify-remarks')

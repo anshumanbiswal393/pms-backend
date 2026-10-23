@@ -19,9 +19,13 @@ from apps.features.crm.services import EncryptionHelper
 from apps.features.inventory.models import InventoryUnit, InventoryUnitType
 from apps.features.rates.models import RatePlan, RatePlanVersion, Service, HospitalityPackage, Coupon, MealPlan, TenantMealPlanPrice
 
+import datetime
 from apps.core.common.redis_lock import redis_distributed_lock
 from apps.features.reservations.email_service import send_reservation_confirmation_email_async
 from apps.core.common.notification_service import NotificationService
+from apps.features.reservations.concurrency import (
+    InventoryLockManager, ReservationHoldManager, AvailabilityCacheService
+)
 
 def check_room_availability(tenant, room, check_in_date, check_out_date, exclude_allocation_id=None):
     """
@@ -462,6 +466,17 @@ class BookingEngine:
         else:
             spec_requests_str = spec_requests or ""
 
+        # 1. Distributed Inventory Lock & Atomic Capacity Check (Req #1)
+        allocations_data = booking_data.get('allocations', [])
+        is_hold = bool(booking_data.get('is_hold', False))
+        hold_duration_minutes = int(booking_data.get('hold_duration_minutes') or 5)
+        held_until = (timezone.now() + datetime.timedelta(minutes=hold_duration_minutes)) if is_hold else None
+        idempotency_key = booking_data.get('idempotency_key') or None
+
+        # Verify capacity under distributed lock before creating DB records
+        with InventoryLockManager.acquire_inventory_locks(property_obj.id, allocations_data):
+            InventoryLockManager.verify_inventory_capacity(tenant, property_obj, allocations_data)
+
         # Create Reservation Header
         conf_no = cls.generate_confirmation_number()
         reservation = Reservation.objects.create(
@@ -471,7 +486,9 @@ class BookingEngine:
             reservation_source_id=res_source_id,
             group_block=group_block,
             corporate_account=corp_account,
-            status='PENDING',
+            status='HELD' if is_hold else 'PENDING',
+            held_until=held_until,
+            idempotency_key=idempotency_key,
             booking_date=timezone.now().date(),
             arrival_date=booking_data['arrival_date'],
             departure_date=booking_data['departure_date'],
@@ -924,8 +941,17 @@ class BookingEngine:
         reservation.paid_amount = paid_val
         net_payable = (total_amount + tax_amount) - total_discount
         reservation.balance_amount = max(Decimal('0.00'), net_payable - paid_val)
-        reservation.status = 'CONFIRMED'
-        reservation.save()
+
+        # 2nd Requirement: Hold = Status + Timer (5 min hold for race condition prevention)
+        if is_hold:
+            reservation.status = 'HELD'
+            reservation.held_until = held_until
+            reservation.save()
+            ReservationHoldManager.apply_hold(reservation, duration_minutes=hold_duration_minutes)
+        else:
+            reservation.status = 'CONFIRMED'
+            reservation.held_until = None
+            reservation.save()
 
         if paid_val > Decimal('0.00'):
             payment_method_str = booking_data.get('payment_method') or booking_data.get('paymentMethod') or 'Cash'
@@ -946,39 +972,58 @@ class BookingEngine:
         ReservationEvent.objects.create(
             tenant=tenant,
             reservation=reservation,
-            event_type='CREATED',
-            description=f"Reservation created with confirmation number {conf_no}.",
+            event_type='HELD' if is_hold else 'CREATED',
+            description=f"Reservation placed on {hold_duration_minutes}-minute hold with confirmation number {conf_no}." if is_hold else f"Reservation created with confirmation number {conf_no}.",
             actor_user=user,
             payload_diff=make_serializable(model_to_dict(reservation, exclude=['created_at', 'updated_at', 'deleted_at']))
         )
 
-        # 1. Asynchronously send Confirmation Email with PDF Invoice attachment to guest
-        send_reservation_confirmation_email_async(reservation.id)
+        if not is_hold:
+            # 1. Asynchronously send Confirmation Email with PDF Invoice attachment to guest
+            send_reservation_confirmation_email_async(reservation.id)
 
-        # 2. Trigger Real-time System Notification for New Reservation / OTA
-        try:
-            source_name = reservation.reservation_source.name if reservation.reservation_source else "Direct"
-            is_ota = any(ota_kw in source_name.upper() for ota_kw in ['OTA', 'BOOKING.COM', 'EXPEDIA', 'AGODA', 'AIRBNB', 'MMT', 'GOIBIBO'])
-            category = 'OTA' if is_ota else 'RESERVATION'
-            title = f"New OTA Booking: {source_name} ({conf_no})" if is_ota else f"New Reservation: {conf_no}"
-            
-            guest_name_str = f"{primary_guest.first_name} {primary_guest.last_name}".strip() if primary_guest else "Guest"
-            arr_date_str = reservation.arrival_date.strftime('%d %b') if reservation.arrival_date else ''
-            dep_date_str = reservation.departure_date.strftime('%d %b') if reservation.departure_date else ''
-            
-            NotificationService.send_notification(
-                tenant=tenant,
-                property_obj=property_obj,
-                category=category,
-                title=title,
-                message=f"{guest_name_str} booked for {arr_date_str} - {dep_date_str}. Total: ₹{net_payable:,.2f}",
-                level="success",
-                link_url=f"/reservations/{reservation.id}",
-                metadata={"reservation_id": str(reservation.id), "confirmation_number": conf_no, "source": source_name},
-                actor_user=user
-            )
-        except Exception as e:
-            pass
+            # 2. Trigger Real-time System Notification for New Reservation / OTA
+            try:
+                source_name = reservation.reservation_source.name if reservation.reservation_source else "Direct"
+                is_ota = any(ota_kw in source_name.upper() for ota_kw in ['OTA', 'BOOKING.COM', 'EXPEDIA', 'AGODA', 'AIRBNB', 'MMT', 'GOIBIBO'])
+                category = 'OTA' if is_ota else 'RESERVATION'
+                title = f"New OTA Booking: {source_name} ({conf_no})" if is_ota else f"New Reservation: {conf_no}"
+                
+                guest_name_str = f"{primary_guest.first_name} {primary_guest.last_name}".strip() if primary_guest else "Guest"
+                arr_date_str = reservation.arrival_date.strftime('%d %b') if reservation.arrival_date else ''
+                dep_date_str = reservation.departure_date.strftime('%d %b') if reservation.departure_date else ''
+                
+                NotificationService.send_notification(
+                    tenant=tenant,
+                    property_obj=property_obj,
+                    category=category,
+                    title=title,
+                    message=f"{guest_name_str} booked for {arr_date_str} - {dep_date_str}. Total: ₹{net_payable:,.2f}",
+                    level="success",
+                    link_url=f"/reservations/{reservation.id}",
+                    metadata={"reservation_id": str(reservation.id), "confirmation_number": conf_no, "source": source_name},
+                    actor_user=user
+                )
+            except Exception as e:
+                pass
+        else:
+            try:
+                NotificationService.send_notification(
+                    tenant=tenant,
+                    property_obj=property_obj,
+                    category='RESERVATION',
+                    title=f"Room Held: {conf_no} (5 min)",
+                    message=f"Temporary 5-minute checkout hold placed for {primary_guest or 'Guest'}. Expires at {held_until.strftime('%H:%M') if held_until else 'shortly'}.",
+                    level="info",
+                    link_url=f"/reservations/{reservation.id}",
+                    metadata={"reservation_id": str(reservation.id), "confirmation_number": conf_no, "is_held": True},
+                    actor_user=user
+                )
+            except Exception:
+                pass
+
+        # 4th Requirement: Instant Availability Cache Invalidation (Reads from Redis)
+        AvailabilityCacheService.invalidate(str(property_obj.id))
 
         return reservation
 
@@ -1055,6 +1100,8 @@ class RoomAssignmentEngine:
             })
         )
 
+        # Invalidate availability cache so calendar updates
+        AvailabilityCacheService.invalidate(str(allocation.reservation.property.id))
         return allocation
 
     @staticmethod
@@ -1710,6 +1757,7 @@ class ReservationModificationEngine:
             })
         )
 
+        AvailabilityCacheService.invalidate(str(reservation.property.id))
         return reservation
 
 
@@ -1744,6 +1792,8 @@ class ReservationCancellationEngine:
             actor_user=user,
             payload_diff=make_serializable({'reason': cancellation_reason})
         )
+
+        AvailabilityCacheService.invalidate(str(reservation.property.id))
         return reservation
 
 

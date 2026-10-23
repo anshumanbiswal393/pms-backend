@@ -21,6 +21,7 @@ def generate_reservation_id():
 RESERVATION_STATUS_CHOICES = (
     ('INQUIRY', 'Inquiry'),
     ('PENDING', 'Pending'),
+    ('HELD', 'Held'),
     ('CONFIRMED', 'Confirmed'),
     ('GUARANTEED', 'Guaranteed'),
     ('WAITLISTED', 'Waitlisted'),
@@ -117,12 +118,18 @@ class Reservation(BaseModel):
     event_seating_arrangement = models.CharField(max_length=120, null=True, blank=True)
     event_catering_menu = models.CharField(max_length=120, null=True, blank=True)
 
+    # Temporary 5-minute hold timer & Idempotency
+    held_until = models.DateTimeField(null=True, blank=True, db_index=True, help_text="Timestamp when temporary cart hold expires (default 5 min)")
+    idempotency_key = models.CharField(max_length=128, null=True, blank=True, db_index=True, help_text="Unique client token preventing duplicate charges on retry")
+
     class Meta:
         indexes = [
             models.Index(fields=['tenant', 'arrival_date', 'departure_date']),
             models.Index(fields=['tenant', 'status']),
             models.Index(fields=['property', 'arrival_date']),
             models.Index(fields=['deleted_at']),
+            models.Index(fields=['held_until']),
+            models.Index(fields=['idempotency_key']),
         ]
         constraints = [
             models.CheckConstraint(
@@ -147,6 +154,21 @@ class Reservation(BaseModel):
         from decimal import Decimal
         base_calc = (self.total_amount or Decimal('0.00')) + (self.tax_amount or Decimal('0.00')) - (self.discount_amount or Decimal('0.00'))
         return max(Decimal('0.00'), base_calc)
+
+    @property
+    def is_held(self):
+        if self.status == 'HELD':
+            if self.held_until and self.held_until < timezone.now():
+                return False
+            return True
+        return False
+
+    @property
+    def remaining_hold_seconds(self):
+        if self.status == 'HELD' and self.held_until:
+            diff = (self.held_until - timezone.now()).total_seconds()
+            return max(0, int(diff))
+        return 0
 
     def save(self, *args, **kwargs):
         if not self.confirmation_number:
