@@ -618,7 +618,14 @@ def su_reservation_webhook_view(request):
     """
     Webhook endpoint for receiving real-time booking push notifications from STAAH ChannelConnect.
     POST /api/v1/channel-manager/webhook/reservation/
-    return Response(res, status=status.HTTP_200_OK)
+    """
+    try:
+        service = ReservationIngestionService()
+        data = request.data or {}
+        res = service.ingest_reservation_payload(data)
+        return Response(res, status=status.HTTP_200_OK if res.get('success') else status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return Response({"success": False, "error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])
