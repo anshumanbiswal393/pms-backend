@@ -457,6 +457,24 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 except Exception as e:
                     return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
+        # If status is being set to CHECKED_OUT, route through checkout engine to validate balance and folio
+        target_status = request.data.get('status')
+        if target_status and str(target_status).upper() in ['CHECKED_OUT', 'CHECKED-OUT']:
+            try:
+                from apps.features.reservations.services import CheckInCheckOutEngine
+                instance = CheckInCheckOutEngine.check_out(
+                    tenant=tenant,
+                    reservation_id=instance.id,
+                    user=request.user if request.user.is_authenticated else None
+                )
+                self._invalidate_cache()
+                serializer = self.get_serializer(instance)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            except DjangoValidationError as e:
+                handle_django_validation_error(e)
+            except Exception as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
         response = super().partial_update(request, *args, **kwargs)
         self._invalidate_cache()
         return response

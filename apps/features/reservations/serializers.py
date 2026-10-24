@@ -198,6 +198,44 @@ class GroupBlockSerializer(serializers.ModelSerializer):
             pass
         return str(obj.nationality)
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        target_status = attrs.get('status')
+        if target_status and str(target_status).upper() in ['CHECKED_OUT', 'CHECKED-OUT']:
+            # Calculate grand total and paid amount
+            from decimal import Decimal
+            contracted_rev = attrs.get('contracted_revenue') if attrs.get('contracted_revenue') is not None else (self.instance.contracted_revenue if self.instance else Decimal('0.00'))
+            extra_charges = attrs.get('extra_charges') if attrs.get('extra_charges') is not None else (self.instance.extra_charges if self.instance else [])
+            paid_amount = attrs.get('paid_amount') if attrs.get('paid_amount') is not None else (self.instance.paid_amount if self.instance else Decimal('0.00'))
+            payment_history = attrs.get('payment_history') if attrs.get('payment_history') is not None else (self.instance.payment_history if self.instance else [])
+
+            extra_total = Decimal('0.00')
+            if isinstance(extra_charges, list):
+                for ec in extra_charges:
+                    if isinstance(ec, dict):
+                        amt = Decimal(str(ec.get('amount') or 0))
+                        qty = Decimal(str(ec.get('quantity') or 1))
+                        extra_total += (amt * qty)
+
+            grand_total = Decimal(str(contracted_rev or 0)) + extra_total
+
+            history_paid = Decimal('0.00')
+            if isinstance(payment_history, list):
+                for p in payment_history:
+                    if isinstance(p, dict):
+                        history_paid += Decimal(str(p.get('amount') or 0))
+
+            direct_paid = Decimal(str(paid_amount or 0))
+            total_paid = max(direct_paid, history_paid)
+            balance_due = max(Decimal('0.00'), grand_total - total_paid)
+
+            if balance_due > Decimal('0.00'):
+                raise serializers.ValidationError(
+                    f"Cannot check out group booking with outstanding balance due of ₹{balance_due:,.2f}. All outstanding dues must be settled to ₹0 before checking out."
+                )
+
+        return attrs
+
 
 class ReservationRateSnapshotSerializer(serializers.ModelSerializer):
     class Meta:
