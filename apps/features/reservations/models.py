@@ -2,6 +2,7 @@ from django.db import models
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 import random
+import builtins
 from apps.core.common.models import BaseModel, BaseManager, BaseQuerySet
 from apps.core.tenants.models import Tenant, Property
 from apps.features.crm.models import GuestProfile
@@ -155,7 +156,7 @@ class Reservation(BaseModel):
         base_calc = (self.total_amount or Decimal('0.00')) + (self.tax_amount or Decimal('0.00')) - (self.discount_amount or Decimal('0.00'))
         return max(Decimal('0.00'), base_calc)
 
-    @property
+    @builtins.property
     def is_held(self):
         if self.status == 'HELD':
             if self.held_until and self.held_until < timezone.now():
@@ -163,7 +164,7 @@ class Reservation(BaseModel):
             return True
         return False
 
-    @property
+    @builtins.property
     def remaining_hold_seconds(self):
         if self.status == 'HELD' and self.held_until:
             diff = (self.held_until - timezone.now()).total_seconds()
