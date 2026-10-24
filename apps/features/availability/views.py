@@ -125,7 +125,25 @@ class InventoryRestrictionViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         property_id = self.request.query_params.get('property_id')
         if property_id:
             qs = qs.filter(property_id=property_id)
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
+        if start_date:
+            qs = qs.filter(date__gte=start_date)
+        if end_date:
+            qs = qs.filter(date__lte=end_date)
         return qs
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        self._invalidate_cache()
+
+    def perform_update(self, serializer):
+        super().perform_update(serializer)
+        self._invalidate_cache()
+
+    def perform_destroy(self, instance):
+        super().perform_destroy(instance)
+        self._invalidate_cache()
 
     @extend_schema(
         request=None,
@@ -169,19 +187,31 @@ class InventoryRestrictionViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         created_count = 0
         current_date = start_date
         while current_date <= end_date:
+            unit_type_id = inventory_unit_type_id if inventory_unit_type_id and inventory_unit_type_id != "All Room Types" else None
+            parsed_val = None
+            if restriction_value is not None and str(restriction_value).strip() != '':
+                try:
+                    parsed_val = int(restriction_value)
+                except (ValueError, TypeError):
+                    parsed_val = None
+
+            if restriction_type in ['MIN_LOS', 'MAX_LOS'] and (parsed_val is None or parsed_val < 1):
+                parsed_val = max(1, (end_date - start_date).days + 1)
+
             InventoryRestriction.objects.update_or_create(
                 tenant=tenant,
                 property_id=property_id,
                 date=current_date,
-                inventory_unit_type_id=inventory_unit_type_id if inventory_unit_type_id and inventory_unit_type_id != "All Room Types" else None,
+                inventory_unit_type_id=unit_type_id,
                 restriction_type=restriction_type,
                 defaults={
-                    'restriction_value': int(restriction_value) if restriction_value is not None else None
+                    'restriction_value': parsed_val
                 }
             )
             created_count += 1
             current_date += datetime.timedelta(days=1)
 
+        self._invalidate_cache()
         return Response({'status': 'success', 'created_records': created_count}, status=status.HTTP_200_OK)
 
 
