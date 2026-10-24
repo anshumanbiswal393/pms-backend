@@ -204,6 +204,28 @@ class RateCalendarViewSet(viewsets.ModelViewSet):
             qs = qs.filter(property_id=property_id)
         return qs
 
+    def perform_create(self, serializer):
+        tenant = getattr(self.request, 'tenant', None)
+        instance = serializer.save()
+        if tenant and instance.property_id:
+            from django.core.cache import cache
+            cache.delete_pattern(f"ratecalendar_tenant_{tenant.id}_prop_{instance.property_id}_*") if hasattr(cache, 'delete_pattern') else cache.clear()
+
+    def perform_update(self, serializer):
+        tenant = getattr(self.request, 'tenant', None)
+        instance = serializer.save()
+        if tenant and instance.property_id:
+            from django.core.cache import cache
+            cache.delete_pattern(f"ratecalendar_tenant_{tenant.id}_prop_{instance.property_id}_*") if hasattr(cache, 'delete_pattern') else cache.clear()
+
+    def perform_destroy(self, instance):
+        tenant = getattr(self.request, 'tenant', None)
+        prop_id = instance.property_id
+        instance.delete()
+        if tenant and prop_id:
+            from django.core.cache import cache
+            cache.delete_pattern(f"ratecalendar_tenant_{tenant.id}_prop_{prop_id}_*") if hasattr(cache, 'delete_pattern') else cache.clear()
+
     @extend_schema(request=RebuildCalendarSerializer)
     @action(detail=False, methods=['post'], url_path='rebuild')
     def rebuild(self, request):

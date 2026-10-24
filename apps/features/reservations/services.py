@@ -2078,10 +2078,14 @@ class PricingEngine:
             # Room discount handling
             alloc_disc_pct = Decimal(str(alloc.get('discount_percent', 0) or 0))
             alloc_disc_amt = Decimal(str(alloc.get('discount_amount', 0) or 0))
-            if alloc_disc_pct > Decimal('0.00') and alloc_disc_amt == Decimal('0.00'):
+            if alloc_disc_pct > Decimal('0.00'):
                 alloc_disc_amt = (alloc_total * alloc_disc_pct) / Decimal('100.0')
-            elif alloc_disc_amt > Decimal('0.00') and alloc_disc_pct == Decimal('0.00') and alloc_total > Decimal('0.00'):
-                alloc_disc_pct = (alloc_disc_amt / alloc_total) * Decimal('100.0')
+            elif alloc_disc_amt > Decimal('0.00'):
+                # If per-night discount amount was passed, scale by night_count
+                if alloc_disc_amt < alloc_total and night_count > 1:
+                    alloc_disc_amt = min(alloc_total, alloc_disc_amt * Decimal(str(night_count)))
+                if alloc_total > Decimal('0.00'):
+                    alloc_disc_pct = (alloc_disc_amt / alloc_total) * Decimal('100.0')
 
             # Combined taxable base for this room allocation
             room_taxable_total = max(
@@ -2188,21 +2192,22 @@ class PricingEngine:
                 pass
                 
         # Calculate discount from coupon
-        coupon_code = data.get('coupon_code')
+        coupon_code = str(data.get('coupon_code') or '').strip()
         if coupon_code:
             try:
-                coupon = Coupon.objects.get(tenant=tenant, code=coupon_code.upper().strip(), is_active=True)
-                if not coupon.max_uses or coupon.current_uses < coupon.max_uses:
+                coupon = Coupon.objects.filter(tenant=tenant, code__iexact=coupon_code, is_active=True).first()
+                if coupon and (not coupon.max_uses or coupon.current_uses < coupon.max_uses):
                     if coupon.discount_type == 'FLAT':
-                        discount_amount = coupon.discount_value
+                        discount_amount = Decimal(str(coupon.discount_value))
                     elif coupon.discount_type == 'PERCENTAGE':
-                        discount_amount = total_amount * (coupon.discount_value / Decimal('100.0'))
+                        discount_amount = total_amount * (Decimal(str(coupon.discount_value)) / Decimal('100.0'))
                         
+                    discount_amount = min(total_amount, discount_amount)
                     breakdown.append({
                         'label': f"Discount ({coupon.code})",
                         'amount': float(-discount_amount)
                     })
-            except Coupon.DoesNotExist:
+            except Exception:
                 pass
                 
         total_price = (total_amount + tax_amount) - discount_amount
