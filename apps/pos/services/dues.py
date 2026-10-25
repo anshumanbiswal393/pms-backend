@@ -22,6 +22,7 @@ from apps.POS.models import (
     POSDueBill,
     POSDayClose,
     Outlet,
+    KOTTicket,
 )
 from apps.POS.services.orders import OrderService, PAYMENT_UI, ORDER_TYPE_UI
 
@@ -147,14 +148,30 @@ class DueLedgerService:
         tenant_id=None,
         include_settled: bool = False,
     ) -> list[dict[str, Any]]:
+        # Ensure any open unpaid orders (status in PLACED, PREPARED) have a due bill
+        open_orders_qs = POSOrder.objects.filter(
+            deleted_at__isnull=True,
+            status__in=("PLACED", "PREPARED"),
+        )
+        if property_id:
+            open_orders_qs = open_orders_qs.filter(property_id=property_id)
+        if outlet_id:
+            open_orders_qs = open_orders_qs.filter(outlet_id=outlet_id)
+        if tenant_id:
+            open_orders_qs = open_orders_qs.filter(tenant_id=tenant_id)
+
+        for o in open_orders_qs:
+            cls.create_for_order(o, paid_amount=Decimal("0.00"))
+
         qs = (
-            POSDueBill.objects.filter(deleted_at__isnull=True)
+            POSDueBill.objects.filter(deleted_at__isnull=True, order__deleted_at__isnull=True)
+            .exclude(order__status="CANCELLED")
             .select_related("order", "outlet")
             .prefetch_related("order__items")
             .order_by("-created_at")
         )
         if not include_settled:
-            qs = qs.exclude(status="SETTLED")
+            qs = qs.exclude(status="SETTLED").exclude(order__status="SETTLED")
         if property_id:
             qs = qs.filter(property_id=property_id)
         if outlet_id:
@@ -172,12 +189,25 @@ class DueLedgerService:
         *,
         user=None,
     ) -> dict[str, Any]:
-        bill = (
+        bill_qs = (
             POSDueBill.objects.select_for_update()
-            .filter(pk=bill_id, deleted_at__isnull=True)
+            .filter(deleted_at__isnull=True)
             .select_related("order")
-            .first()
         )
+        is_uuid = False
+        try:
+            UUID(str(bill_id))
+            is_uuid = True
+        except (ValueError, AttributeError):
+            is_uuid = False
+
+        if is_uuid:
+            bill = bill_qs.filter(Q(pk=bill_id) | Q(order_id=bill_id)).first()
+        else:
+            bill = bill_qs.filter(
+                Q(bill_number=bill_id) | Q(order__order_number=bill_id)
+            ).first()
+
         if not bill:
             raise ValidationError({"bill": "Due bill not found."})
         if bill.status == "SETTLED":
@@ -233,11 +263,22 @@ class DueLedgerService:
         order = bill.order
         if bill.status == "SETTLED":
             now = timezone.now()
+            prev_status = order.status
             order.status = "SETTLED"
             order.settled_at = now
             order.payment_mode = mode
             order.save(update_fields=["status", "settled_at", "payment_mode", "updated_at"])
+            OrderService._record_status(order, prev_status, "SETTLED", note=f"Settled via {mode}", user=user)
+            # Mark all KOT tickets as SERVED so they clear from kitchen display
+            KOTTicket.objects.filter(
+                order=order, status__in=("PENDING", "PREPARING", "READY")
+            ).update(status="SERVED", ready_at=now)
             OrderService._release_table(order)
+            from apps.POS.services.stock import StockService
+            try:
+                StockService.deduct_for_order(order, user=user)
+            except Exception:
+                pass
 
         bill = (
             POSDueBill.objects.filter(pk=bill.pk)

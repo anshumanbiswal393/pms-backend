@@ -598,6 +598,17 @@ class OrderService:
                 ]
             )
 
+        if status != "SETTLED":
+            from apps.POS.services.dues import DueLedgerService
+            try:
+                DueLedgerService.create_for_order(
+                    order,
+                    paid_amount=Decimal("0.00"),
+                    user=user,
+                )
+            except Exception:
+                pass
+
         order = cls.order_queryset().get(pk=order.pk)
         payload = cls.serialize_order(order)
         if ticket:
@@ -616,6 +627,13 @@ class OrderService:
         )
         if not ticket:
             raise ValidationError({"ticket": "KOT not found."})
+        # If order was deleted or cancelled, mark ticket CANCELLED and deleted cleanly
+        if not ticket.order or ticket.order.deleted_at is not None or ticket.order.status == "CANCELLED":
+            ticket.status = "CANCELLED"
+            ticket.deleted_at = timezone.now()
+            ticket.save(update_fields=["status", "deleted_at", "updated_at"])
+            return cls.serialize_kot(ticket)
+
         if ticket.status in ("SERVED", "CANCELLED"):
             raise ValidationError(
                 {"status": f"Cannot mark ready from status {ticket.status}."}
@@ -628,8 +646,11 @@ class OrderService:
             deleted_at__isnull=True,
             status__in=("PENDING", "PREPARING"),
         )
-        if not remaining.exists() and ticket.order.status == "PLACED":
-            cls.advance_stage(ticket.order_id, user=user)
+        if not remaining.exists() and ticket.order and not ticket.order.deleted_at and ticket.order.status == "PLACED":
+            try:
+                cls.advance_stage(ticket.order_id, user=user)
+            except Exception:
+                pass
         ticket = (
             KOTTicket.objects.select_related("order")
             .prefetch_related("items")
@@ -648,6 +669,12 @@ class OrderService:
         )
         if not ticket:
             raise ValidationError({"ticket": "KOT not found."})
+        if not ticket.order or ticket.order.deleted_at is not None or ticket.order.status == "CANCELLED":
+            ticket.status = "CANCELLED"
+            ticket.deleted_at = timezone.now()
+            ticket.save(update_fields=["status", "deleted_at", "updated_at"])
+            return cls.serialize_kot(ticket)
+
         if ticket.status == "CANCELLED":
             raise ValidationError({"status": "Cannot serve a cancelled KOT."})
         ticket.status = "SERVED"
@@ -659,8 +686,11 @@ class OrderService:
             deleted_at__isnull=True,
             status__in=("PENDING", "PREPARING"),
         )
-        if not remaining_prep.exists() and ticket.order.status == "PLACED":
-            cls.advance_stage(ticket.order_id, user=user)
+        if not remaining_prep.exists() and ticket.order and not ticket.order.deleted_at and ticket.order.status == "PLACED":
+            try:
+                cls.advance_stage(ticket.order_id, user=user)
+            except Exception:
+                pass
         ticket = (
             KOTTicket.objects.select_related("order")
             .prefetch_related("items")
@@ -802,6 +832,15 @@ class OrderService:
                 order, prev, "PLACED", note="Items edited — back to kitchen", user=user
             )
 
+        # Sync due bill total
+        from apps.POS.models import POSDueBill
+        due_bill = POSDueBill.objects.filter(order=order, deleted_at__isnull=True).first()
+        if due_bill:
+            due_bill.total_amount = Decimal(str(order.grand_total))
+            due_bill.due_amount = max(Decimal("0.00"), due_bill.total_amount - Decimal(str(due_bill.paid_amount)))
+            due_bill.recompute_status()
+            due_bill.save(update_fields=["total_amount", "due_amount", "status", "updated_at"])
+
         order = cls.order_queryset().get(pk=order.pk)
         payload = cls.serialize_order(order)
         payload["kotId"] = ticket.sequence
@@ -824,6 +863,8 @@ class OrderService:
         KOTTicket.objects.filter(
             order=order, status__in=("PENDING", "PREPARING")
         ).update(status="CANCELLED")
+        from apps.POS.models import POSDueBill
+        POSDueBill.objects.filter(order=order).update(status="SETTLED", deleted_at=timezone.now())
         if order.table_id:
             RestaurantTable.objects.filter(
                 id=order.table_id, active_order_id=order.id
@@ -989,8 +1030,23 @@ class OrderService:
         outlet_id=None,
         status: str | None = None,
     ) -> dict[str, Any]:
+        # Clean up any tickets belonging to soft-deleted or cancelled orders
+        KOTTicket.objects.filter(
+            deleted_at__isnull=True,
+            order__deleted_at__isnull=False,
+        ).update(status="CANCELLED", deleted_at=timezone.now())
+        KOTTicket.objects.filter(
+            deleted_at__isnull=True,
+            order__status__in=("CANCELLED", "SETTLED"),
+            status__in=("PENDING", "PREPARING"),
+        ).update(status="SERVED")
+
         qs = (
-            KOTTicket.objects.filter(deleted_at__isnull=True)
+            KOTTicket.objects.filter(
+                deleted_at__isnull=True,
+                order__deleted_at__isnull=True,
+            )
+            .exclude(order__status__in=("CANCELLED", "SETTLED"))
             .select_related("order")
             .prefetch_related("items")
             .order_by("sent_at")

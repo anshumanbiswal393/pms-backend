@@ -1062,7 +1062,7 @@ class POSOrderViewSet(viewsets.ViewSet):
             )
         except ValidationError as exc:
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
-        return Response(payload)
+        return Response({"success": True, "settledBill": payload, **payload})
 
     @extend_schema(tags=["POS - Orders"], description="CSV export of order history.")
     @action(detail=False, methods=["get"], url_path="history/export")
