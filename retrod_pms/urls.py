@@ -137,6 +137,9 @@ urlpatterns = [
     # Global Reference Data Endpoints
     path('api/reference/', include('apps.core.reference.urls')),
 
+    # Retrod Point of Sale Domain Endpoints (Product 5)
+    path('api/pos/', include('apps.POS.urls')),
+
     # Unified Central Email Service Endpoint
     path('api/common/send-email/', UnifiedSendEmailView.as_view(), name='unified_send_email'),
     path('api/send-email/', UnifiedSendEmailView.as_view(), name='unified_send_email_alias'),

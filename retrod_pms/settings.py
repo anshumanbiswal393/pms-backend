@@ -77,6 +77,9 @@ INSTALLED_APPS = [
 
     # Channel Manager (Product 4 - STAAH Su API)
     'apps.features.channel_manager',
+
+    # Retrod Point of Sale (Product 5)
+    'apps.POS',
 ]
 
 
