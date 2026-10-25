@@ -187,6 +187,7 @@ class OutletViewSet(viewsets.ModelViewSet):
 class FloorSectionViewSet(viewsets.ModelViewSet):
     serializer_class = FloorSectionSerializer
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def get_queryset(self):
         qs = FloorSection.objects.filter(deleted_at__isnull=True)
@@ -220,6 +221,7 @@ class FloorSectionViewSet(viewsets.ModelViewSet):
 class RestaurantTableViewSet(viewsets.ModelViewSet):
     serializer_class = RestaurantTableSerializer
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def get_queryset(self):
         qs = RestaurantTable.objects.filter(deleted_at__isnull=True)
@@ -787,6 +789,7 @@ class BillingMenuCatalogAPIView(APIView):
     """Active billing catalog: categories + items for an outlet."""
 
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     @extend_schema(
         tags=["POS - Menu"],
@@ -863,6 +866,7 @@ class POSOrderViewSet(viewsets.ViewSet):
     """Part 3 — Orders + KOT lifecycle APIs."""
 
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def list(self, request):
         scope = _request_scope(request)
@@ -1091,6 +1095,7 @@ class KOTListAPIView(APIView):
     """Kitchen display list of open KOT tickets."""
 
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     @extend_schema(tags=["POS - Orders"], description="List active KOT tickets.")
     def get(self, request):
@@ -1106,6 +1111,7 @@ class KOTListAPIView(APIView):
 
 class KOTTicketReadyAPIView(APIView):
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     @extend_schema(tags=["POS - Orders"], description="Chef marks a KOT ticket ready.")
     def post(self, request, pk=None):
@@ -1118,6 +1124,7 @@ class KOTTicketReadyAPIView(APIView):
 
 class KOTTicketServedAPIView(APIView):
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     @extend_schema(tags=["POS - Orders"], description="Waiter marks a KOT ticket served.")
     def post(self, request, pk=None):

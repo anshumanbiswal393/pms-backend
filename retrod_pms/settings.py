@@ -205,6 +205,7 @@ CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://144.31.146.64:3000",
+    "http://144.31.146.64:3002",
     "https://app.dev.retrod.in",
     "https://app.dev.retrod.in:8443",
     "http://app.dev.retrod.in",
@@ -214,6 +215,7 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https?://.*\.retrod\.in(:\d+)?$",
     r"^https?://localhost(:\d+)?$",
     r"^https?://127\.0\.0\.1(:\d+)?$",
+    r"^https?://144\.31\.146\.64(:\d+)?$",
 ]
 
 CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[
@@ -225,6 +227,8 @@ CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[
     "http://127.0.0.1:5173",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://144.31.146.64:3000",
+    "http://144.31.146.64:3002",
     "https://*.retrod.in",
     "http://*.retrod.in",
 ])
@@ -244,6 +248,8 @@ CORS_ALLOW_HEADERS = [
     "x-hotel-slug",
     "x-hotel-subdomain",
     "x-tenant-slug",
+    "x-outlet-id",
+    "x-tenant-id",
 ]
 
 # SSL & Proxy headers when behind Nginx/Cloudflare/Reverse Proxy

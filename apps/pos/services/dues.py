@@ -232,8 +232,12 @@ class DueLedgerService:
 
         order = bill.order
         if bill.status == "SETTLED":
+            now = timezone.now()
+            order.status = "SETTLED"
+            order.settled_at = now
             order.payment_mode = mode
-            order.save(update_fields=["payment_mode", "updated_at"])
+            order.save(update_fields=["status", "settled_at", "payment_mode", "updated_at"])
+            OrderService._release_table(order)
 
         bill = (
             POSDueBill.objects.filter(pk=bill.pk)
