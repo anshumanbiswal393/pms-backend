@@ -1234,6 +1234,7 @@ class StockItemAPIView(APIView):
                     tenant_id=scope["tenant_id"],
                     search=request.query_params.get("search"),
                     item_kind=request.query_params.get("itemKind") or request.query_params.get("item_kind"),
+                    category=request.query_params.get("category"),
                 ),
             }
         )

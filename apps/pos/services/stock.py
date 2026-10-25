@@ -134,6 +134,7 @@ class StockService:
         active_only: bool = True,
         search: str | None = None,
         item_kind: str | None = None,
+        category: str | None = None,
     ) -> list[dict[str, Any]]:
         qs = POSStockItem.objects.filter(deleted_at__isnull=True)
         if active_only:
@@ -146,6 +147,8 @@ class StockService:
             qs = qs.filter(tenant_id=tenant_id)
         if item_kind:
             qs = qs.filter(item_kind=item_kind.upper())
+        if category and category.lower() != "all":
+            qs = qs.filter(category__iexact=category)
         if search:
             qs = qs.filter(name__icontains=search) | qs.filter(code__icontains=search)
         return [cls.serialize_stock(i) for i in qs.order_by("name")]
@@ -799,6 +802,15 @@ class StockService:
             "isActive": unit.is_active,
         }
 
+    DEFAULT_UNITS = [
+        {"id": "U-1", "name": "Kilogram", "symbol": "kg", "type": "Weight", "baseUnit": "Gram (g)", "ratio": "1 kg = 1000 g", "ratioToBase": 1000, "isActive": True},
+        {"id": "U-2", "name": "Gram", "symbol": "g", "type": "Weight", "baseUnit": "Gram (g)", "ratio": "1 g = 1 g", "ratioToBase": 1, "isActive": True},
+        {"id": "U-3", "name": "Liter", "symbol": "L", "type": "Volume", "baseUnit": "Milliliter (ml)", "ratio": "1 L = 1000 ml", "ratioToBase": 1000, "isActive": True},
+        {"id": "U-4", "name": "Milliliter", "symbol": "ml", "type": "Volume", "baseUnit": "Milliliter (ml)", "ratio": "1 ml = 1 ml", "ratioToBase": 1, "isActive": True},
+        {"id": "U-5", "name": "Pieces", "symbol": "pcs", "type": "Count", "baseUnit": "Pieces", "ratio": "1 pcs = 1 pcs", "ratioToBase": 1, "isActive": True},
+        {"id": "U-6", "name": "Portion", "symbol": "portion", "type": "Serving", "baseUnit": "Portion", "ratio": "1 portion = 1 portion", "ratioToBase": 1, "isActive": True},
+    ]
+
     @classmethod
     def list_units(cls, *, property_id=None, tenant_id=None) -> list[dict[str, Any]]:
         qs = POSUnit.objects.filter(deleted_at__isnull=True, is_active=True)
@@ -806,16 +818,18 @@ class StockService:
             qs = qs.filter(property_id=property_id)
         if tenant_id:
             qs = qs.filter(tenant_id=tenant_id)
-        units = [cls.serialize_unit(u) for u in qs.order_by("name")]
-        if units:
-            return units
-        return [
-            {"id": "U-1", "name": "Kilogram", "symbol": "kg", "type": "Weight", "baseUnit": "Gram (g)", "ratio": "1 kg = 1000 g", "ratioToBase": 1000, "isActive": True},
-            {"id": "U-2", "name": "Gram", "symbol": "g", "type": "Weight", "baseUnit": "Gram (g)", "ratio": "1 g = 1 g", "ratioToBase": 1, "isActive": True},
-            {"id": "U-3", "name": "Liter", "symbol": "L", "type": "Volume", "baseUnit": "Milliliter (ml)", "ratio": "1 L = 1000 ml", "ratioToBase": 1000, "isActive": True},
-            {"id": "U-4", "name": "Milliliter", "symbol": "ml", "type": "Volume", "baseUnit": "Milliliter (ml)", "ratio": "1 ml = 1 ml", "ratioToBase": 1, "isActive": True},
-            {"id": "U-5", "name": "Pieces", "symbol": "pcs", "type": "Count", "baseUnit": "Pieces", "ratio": "1 pcs = 1 pcs", "ratioToBase": 1, "isActive": True},
-        ]
+        custom_units = [cls.serialize_unit(u) for u in qs.order_by("name")]
+
+        # Always include standard units along with any custom units
+        combined = [dict(u) for u in cls.DEFAULT_UNITS]
+        existing_symbols = {u["symbol"].lower() for u in combined}
+        for cu in custom_units:
+            if cu["symbol"].lower() not in existing_symbols:
+                combined.append(cu)
+                existing_symbols.add(cu["symbol"].lower())
+            else:
+                combined = [cu if u["symbol"].lower() == cu["symbol"].lower() else u for u in combined]
+        return combined
 
     @classmethod
     def save_unit(cls, data: dict[str, Any], *, user=None) -> dict[str, Any]:
