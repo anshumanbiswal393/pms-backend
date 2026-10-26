@@ -11,6 +11,14 @@ from apps.POS.services.stock import (
     AggregatorWebhookService,
 )
 from apps.POS.services.reports import SalesAnalyticsService
+from apps.POS.services.management import (
+    OutletConfigService,
+    ShiftManagementService,
+    StaffAuthService,
+    VirtualWalletService,
+    AuditTrailService,
+    DataManagementService,
+)
 
 __all__ = [
     "OccupancyService",
@@ -24,4 +32,11 @@ __all__ = [
     "ReportService",
     "AggregatorWebhookService",
     "SalesAnalyticsService",
+    "OutletConfigService",
+    "ShiftManagementService",
+    "StaffAuthService",
+    "VirtualWalletService",
+    "AuditTrailService",
+    "DataManagementService",
 ]
+

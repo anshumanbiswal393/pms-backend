@@ -1708,3 +1708,34 @@ class POSUnit(BaseModel):
 
     def __str__(self):
         return f"{self.name} ({self.symbol})"
+
+
+# Management Module Domain Models (Epic 7 & Epic 8)
+from .models_management import (
+    POSOutletConfig,
+    POSSubOrderType,
+    POSAreaDeliveryCharge,
+    POSDeliveryDistanceSlab,
+    POSEmailTemplate,
+    POSBankAccount,
+    POSCashierShift,
+    POSCashDrawerMovement,
+    POSCashDenomination,
+    POSExpense,
+    POSGstSetting,
+    POSKycDocument,
+    POSLoanFacility,
+    POSOnlineReconciliation,
+    POSPaymentGatewayConfig,
+    POSServicePaymentRecord,
+    POSUtilityBill,
+    POSVirtualWallet,
+    POSVirtualWalletTransaction,
+    POSBillerGroup,
+    POSStaffUser,
+    POSManagementLog,
+    POSSupportTicket,
+    POSMarketplaceIntegration,
+    POSAuditTrail,
+)
+

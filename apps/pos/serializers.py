@@ -1011,3 +1011,8 @@ class POSDueSettleSerializer(serializers.Serializer):
                 {"payment_mode": "payment_mode is required."}
             )
         return attrs
+
+
+# Management Module Domain Serializers (Epic 7 & Epic 8)
+from .serializers_management import *
+

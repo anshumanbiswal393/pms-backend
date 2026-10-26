@@ -1850,3 +1850,8 @@ class PurchaseReturnDetailAPIView(APIView):
             return Response({"detail": "Purchase return not found."}, status=status.HTTP_404_NOT_FOUND)
         return Response({"success": True})
 
+
+# Management Module Domain ViewSets and APIViews (Epic 7 & Epic 8)
+from .views_management import *
+
+

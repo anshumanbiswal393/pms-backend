@@ -143,6 +143,8 @@ else:
 
 
 
+
+
 # Caching configuration for high-speed sub-millisecond API responses
 CACHES = {
     'default': {

@@ -1,6 +1,6 @@
 import uuid
 
-from apps.core.tenants.models import Property, Tenant
+from apps.core.tenants.models import Property, Tenant, TenantConfiguration
 from apps.POS.models import Outlet, POSStockItem
 from apps.POS.services.stock import StockService
 
@@ -18,7 +18,8 @@ def make_tenant_property_outlet(suffix: str | None = None):
         currency="INR",
         timezone="Asia/Kolkata",
     )
-    prop = Property.objects.create(
+    TenantConfiguration.objects.create(tenant=tenant, enforce_ip_whitelist=False)
+    prop = Property(
         tenant=tenant,
         name=f"Stock Property {suffix}",
         address_line_1="1 Test Street",
@@ -31,6 +32,8 @@ def make_tenant_property_outlet(suffix: str | None = None):
         currency="INR",
         timezone="Asia/Kolkata",
     )
+    prop._skip_booking_sync = True
+    prop.save()
     outlet = Outlet.objects.create(
         tenant=tenant,
         property=prop,

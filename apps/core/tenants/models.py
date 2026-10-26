@@ -117,8 +117,9 @@ class Property(BaseModel):
 
         # Trigger real-time sync to Booking Engine
         try:
-            from apps.booking.sync import sync_pms_property_to_booking_engine
-            sync_pms_property_to_booking_engine(self)
+            if not getattr(self, '_skip_booking_sync', False):
+                from apps.booking.sync import sync_pms_property_to_booking_engine
+                sync_pms_property_to_booking_engine(self)
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning(f"Booking engine real-time sync notice for {self.name}: {e}")

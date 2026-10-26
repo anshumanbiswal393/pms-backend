@@ -66,6 +66,61 @@ router.register(r'menu/modifier-groups', ModifierGroupViewSet, basename='pos-mod
 router.register(r'menu/special-notes', SpecialNoteViewSet, basename='pos-special-note')
 router.register(r'orders', POSOrderViewSet, basename='pos-order')
 
+# Management Module Routers
+from apps.POS.views_management import (
+    POSOutletConfigAPIView,
+    POSOutletConfigResetAPIView,
+    POSSubOrderTypeViewSet,
+    POSAreaDeliveryChargeViewSet,
+    POSDeliveryDistanceSlabViewSet,
+    POSEmailTemplateViewSet,
+    POSBankAccountViewSet,
+    POSCashierShiftViewSet,
+    POSCashDenominationViewSet,
+    POSExpenseViewSet,
+    POSGstSettingAPIView,
+    POSKycDocumentViewSet,
+    POSLoanFacilityViewSet,
+    POSOnlineReconciliationViewSet,
+    POSPaymentGatewayConfigViewSet,
+    POSServicePaymentRecordViewSet,
+    POSUtilityBillViewSet,
+    POSVirtualWalletViewSet,
+    POSBillerGroupViewSet,
+    POSStaffUserViewSet,
+    PINLoginAPIView,
+    SupervisorVerifyAPIView,
+    POSManagementLogViewSet,
+    POSSupportTicketViewSet,
+    POSMarketplaceIntegrationViewSet,
+    POSAuditTrailViewSet,
+    DataManagementStatsAPIView,
+    DataManagementResetDemoAPIView,
+)
+
+router.register(r'management/sub-order-types', POSSubOrderTypeViewSet, basename='pos-management-sub-order-types')
+router.register(r'management/area-delivery-charges', POSAreaDeliveryChargeViewSet, basename='pos-management-area-delivery-charges')
+router.register(r'management/delivery-distance-slabs', POSDeliveryDistanceSlabViewSet, basename='pos-management-delivery-distance-slabs')
+router.register(r'management/email-templates', POSEmailTemplateViewSet, basename='pos-management-email-templates')
+router.register(r'management/accounting/bank-details', POSBankAccountViewSet, basename='pos-management-bank-details')
+router.register(r'management/accounting/denominations', POSCashDenominationViewSet, basename='pos-management-denominations')
+router.register(r'management/accounting/expenses', POSExpenseViewSet, basename='pos-management-expenses')
+router.register(r'management/accounting/kyc', POSKycDocumentViewSet, basename='pos-management-kyc')
+router.register(r'management/accounting/loans', POSLoanFacilityViewSet, basename='pos-management-loans')
+router.register(r'management/accounting/online-reconciliation', POSOnlineReconciliationViewSet, basename='pos-management-online-reconciliation')
+router.register(r'management/accounting/payments-info', POSPaymentGatewayConfigViewSet, basename='pos-management-payments-info')
+router.register(r'management/accounting/service-payments', POSServicePaymentRecordViewSet, basename='pos-management-service-payments')
+router.register(r'management/accounting/utility-bills', POSUtilityBillViewSet, basename='pos-management-utility-bills')
+router.register(r'management/accounting/wallets', POSVirtualWalletViewSet, basename='pos-management-wallets')
+router.register(r'management/users/biller-groups', POSBillerGroupViewSet, basename='pos-management-biller-groups')
+router.register(r'management/users/biller-users', POSStaffUserViewSet, basename='pos-management-biller-users')
+router.register(r'management/shifts', POSCashierShiftViewSet, basename='pos-management-shifts')
+router.register(r'management/logs', POSManagementLogViewSet, basename='pos-management-logs')
+router.register(r'management/support-tickets', POSSupportTicketViewSet, basename='pos-management-support-tickets')
+router.register(r'management/marketplace', POSMarketplaceIntegrationViewSet, basename='pos-management-marketplace')
+router.register(r'management/audit-trail', POSAuditTrailViewSet, basename='pos-management-audit-trail')
+
+
 from rest_framework.decorators import api_view, permission_classes as drf_permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response as DRFResponse
@@ -286,5 +341,14 @@ urlpatterns = [
         ConsumptionReportAPIView.as_view(),
         name='pos-report-consumption',
     ),
+    # Management Module Explicit Endpoints
+    path('management/outlet-config/', POSOutletConfigAPIView.as_view(), name='pos-management-outlet-config'),
+    path('management/outlet-config/reset/', POSOutletConfigResetAPIView.as_view(), name='pos-management-outlet-config-reset'),
+    path('management/accounting/gst/', POSGstSettingAPIView.as_view(), name='pos-management-gst'),
+    path('management/users/pin-login/', PINLoginAPIView.as_view(), name='pos-management-pin-login'),
+    path('management/users/supervisor-verify/', SupervisorVerifyAPIView.as_view(), name='pos-management-supervisor-verify'),
+    path('management/data/stats/', DataManagementStatsAPIView.as_view(), name='pos-management-data-stats'),
+    path('management/data/reset-demo/', DataManagementResetDemoAPIView.as_view(), name='pos-management-data-reset-demo'),
     path('', include(router.urls)),
 ]
+
