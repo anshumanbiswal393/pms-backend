@@ -869,6 +869,8 @@ class ReservationSerializer(serializers.ModelSerializer):
     invoice_number = serializers.SerializerMethodField()
     is_held = serializers.BooleanField(read_only=True)
     remaining_hold_seconds = serializers.IntegerField(read_only=True)
+    payment_method = serializers.SerializerMethodField()
+    payment_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Reservation
@@ -1028,6 +1030,37 @@ class ReservationSerializer(serializers.ModelSerializer):
             return obj.updated_at
         return None
 
+    def get_payment_method(self, obj):
+        if hasattr(obj, 'timeline_events'):
+            events = list(obj.timeline_events.all()) if hasattr(obj.timeline_events, 'all') else []
+            for ev in events:
+                if getattr(ev, 'event_type', '') == 'PAYMENT_RECEIVED' and getattr(ev, 'description', ''):
+                    import re
+                    m = re.search(r'via\s+([^.]+)', ev.description, re.IGNORECASE)
+                    if m:
+                        return m.group(1).strip()
+        try:
+            from apps.features.front_office.models import FolioTransaction
+            tx = FolioTransaction.objects.filter(folio__reservation=obj, transaction_type='PAYMENT').first()
+            if tx and tx.description:
+                import re
+                m = re.search(r'via\s+([^.]+)', tx.description, re.IGNORECASE)
+                if m:
+                    return m.group(1).strip()
+        except Exception:
+            pass
+        return "Cash" if obj.paid_amount and obj.paid_amount > 0 else "Pending"
+
+    def get_payment_status(self, obj):
+        from decimal import Decimal
+        paid = obj.paid_amount or Decimal('0.00')
+        total = obj.get_gross_total() if hasattr(obj, 'get_gross_total') else (obj.total_amount or Decimal('0.00'))
+        if paid <= Decimal('0.00'):
+            return "UNPAID"
+        if paid >= total and total > Decimal('0.00'):
+            return "PAID"
+        return "PARTIAL"
+
 
 
 class CreateBookingSerializer(serializers.Serializer):
@@ -1076,6 +1109,8 @@ class CreateBookingSerializer(serializers.Serializer):
     services = serializers.ListField(child=serializers.CharField(), required=False, default=list)
     coupon_code = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     couponCode = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    total_amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
+    totalAmount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
     discount_amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
     discountAmount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
     paid_amount = serializers.CharField(required=False, allow_blank=True, allow_null=True)

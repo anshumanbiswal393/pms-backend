@@ -43,6 +43,16 @@ class GuestProfileSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id', 'tenant', 'master_guest', 'created_at', 'updated_at', 'created_by', 'updated_by')
 
+    def to_internal_value(self, data):
+        data = data.copy() if hasattr(data, 'copy') else dict(data)
+        tier_val = str(data.get('loyalty_tier') or '').upper().strip()
+        if tier_val == 'VIP':
+            data['loyalty_tier'] = 'STANDARD'
+            data['guest_type'] = 'VIP'
+        elif tier_val and tier_val not in ['PLATINUM', 'GOLD', 'SILVER', 'BRONZE', 'STANDARD']:
+            data['loyalty_tier'] = 'STANDARD'
+        return super().to_internal_value(data)
+
     def get_name(self, obj):
         full_name = f"{obj.first_name or ''} {obj.last_name or ''}".strip()
         return full_name or "Unnamed Guest"

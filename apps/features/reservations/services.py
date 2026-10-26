@@ -933,11 +933,17 @@ class BookingEngine:
         explicit_discount = Decimal(str(booking_data.get('discount_amount') or booking_data.get('discountAmount') or '0.00'))
         total_discount = max(total_room_discounts + coupon_discount, explicit_discount)
 
+        explicit_total = booking_data.get('total_amount') or booking_data.get('totalAmount')
+        if explicit_total is not None and Decimal(str(explicit_total)) > Decimal('0.00'):
+            total_amount = max(total_amount, Decimal(str(explicit_total)))
+
+        paid_val = Decimal(str(booking_data.get('paid_amount') or booking_data.get('paidAmount') or '0.00'))
+        if total_amount == Decimal('0.00') and paid_val > Decimal('0.00'):
+            total_amount = paid_val
+
         reservation.total_amount = total_amount
         reservation.tax_amount = tax_amount
         reservation.discount_amount = total_discount
-
-        paid_val = Decimal(str(booking_data.get('paid_amount') or booking_data.get('paidAmount') or '0.00'))
         reservation.paid_amount = paid_val
         net_payable = (total_amount + tax_amount) - total_discount
         reservation.balance_amount = max(Decimal('0.00'), net_payable - paid_val)
@@ -962,6 +968,31 @@ class BookingEngine:
                 description=f"Deposit Payment of ₹{paid_val} received via {payment_method_str}.",
                 actor_user=user
             )
+            try:
+                from apps.features.front_office.models import GuestFolio, FolioTransaction
+                conf_prefix = str(reservation.confirmation_number or reservation.id)[:8]
+                folio_num = f"FOL-{conf_prefix}"
+                folio, _ = GuestFolio.objects.get_or_create(
+                    tenant=tenant,
+                    reservation=reservation,
+                    defaults={
+                        'folio_number': folio_num,
+                        'status': 'OPEN',
+                        'total_charges': net_payable,
+                        'total_payments': paid_val,
+                        'balance': max(Decimal('0.00'), net_payable - paid_val)
+                    }
+                )
+                FolioTransaction.objects.create(
+                    tenant=tenant,
+                    folio=folio,
+                    transaction_type='PAYMENT',
+                    charge_code='PAYMENT',
+                    amount=paid_val,
+                    description=f"Advance / Deposit payment received via {payment_method_str}"
+                )
+            except Exception as ex:
+                logger.warning(f"Could not initialize guest folio / payment transaction: {ex}")
 
         # Update Group Block pickup count
         if group_block:
