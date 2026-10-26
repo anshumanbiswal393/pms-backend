@@ -678,6 +678,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
 
     property_business_date = serializers.SerializerMethodField()
     checked_in_by_name = serializers.SerializerMethodField()
+    checked_in_at = serializers.SerializerMethodField()
     checked_out_at = serializers.SerializerMethodField()
     reservation_number = serializers.CharField(source='confirmation_number', read_only=True)
     confirmation_code = serializers.CharField(source='confirmation_number', read_only=True)
@@ -700,7 +701,7 @@ class ReservationListSerializer(serializers.ModelSerializer):
             'event_organizer_name', 'event_organizer_contact', 'event_organizer_email',
             'event_organizer_billing_address', 'event_seating_arrangement', 'event_catering_menu',
             'invoice_number',
-            'created_by_name', 'checked_in_by_name', 'checked_out_at', 'actor_name', 'created_at', 'updated_at'
+            'created_by_name', 'checked_in_by_name', 'checked_in_at', 'checked_out_at', 'actor_name', 'created_at', 'updated_at'
         ]
 
     def get_invoice_number(self, obj):
@@ -803,6 +804,22 @@ class ReservationListSerializer(serializers.ModelSerializer):
     def get_total_pax(self, obj):
         return get_reservation_meta(obj)['total_pax']
 
+    def get_checked_in_at(self, obj):
+        if obj.status in ['CHECKED_IN', 'CHECKED_OUT']:
+            if hasattr(obj, 'room_allocations'):
+                for alloc in obj.room_allocations.all():
+                    if hasattr(alloc, 'guests'):
+                        for g in alloc.guests.all():
+                            if getattr(g, 'checked_in_at', None):
+                                return g.checked_in_at
+            if hasattr(obj, 'timeline_events'):
+                evt = obj.timeline_events.filter(event_type__icontains='CHECK_IN').order_by('created_at').first()
+                if evt:
+                    return evt.created_at
+            if obj.status == 'CHECKED_IN':
+                return obj.updated_at
+        return None
+
     def get_checked_out_at(self, obj):
         if obj.status == 'CHECKED_OUT':
             if hasattr(obj, 'room_allocations'):
@@ -811,6 +828,10 @@ class ReservationListSerializer(serializers.ModelSerializer):
                         for g in alloc.guests.all():
                             if getattr(g, 'checked_out_at', None):
                                 return g.checked_out_at
+            if hasattr(obj, 'timeline_events'):
+                evt = obj.timeline_events.filter(event_type__icontains='CHECK_OUT').order_by('-created_at').first()
+                if evt:
+                    return evt.created_at
             return obj.updated_at
         return None
 
@@ -840,6 +861,8 @@ class ReservationSerializer(serializers.ModelSerializer):
     total_pax = serializers.SerializerMethodField()
     created_by_name = serializers.SerializerMethodField()
     checked_in_by_name = serializers.SerializerMethodField()
+    checked_in_at = serializers.SerializerMethodField()
+    checked_out_at = serializers.SerializerMethodField()
     actor_name = serializers.SerializerMethodField()
     reservation_number = serializers.CharField(source='confirmation_number', read_only=True)
     confirmation_code = serializers.CharField(source='confirmation_number', read_only=True)
@@ -973,6 +996,37 @@ class ReservationSerializer(serializers.ModelSerializer):
 
     def get_total_pax(self, obj):
         return get_reservation_meta(obj)['total_pax']
+
+    def get_checked_in_at(self, obj):
+        if obj.status in ['CHECKED_IN', 'CHECKED_OUT']:
+            if hasattr(obj, 'room_allocations'):
+                for alloc in obj.room_allocations.all():
+                    if hasattr(alloc, 'guests'):
+                        for g in alloc.guests.all():
+                            if getattr(g, 'checked_in_at', None):
+                                return g.checked_in_at
+            if hasattr(obj, 'timeline_events'):
+                evt = obj.timeline_events.filter(event_type__icontains='CHECK_IN').order_by('created_at').first()
+                if evt:
+                    return evt.created_at
+            if obj.status == 'CHECKED_IN':
+                return obj.updated_at
+        return None
+
+    def get_checked_out_at(self, obj):
+        if obj.status == 'CHECKED_OUT':
+            if hasattr(obj, 'room_allocations'):
+                for alloc in obj.room_allocations.all():
+                    if hasattr(alloc, 'guests'):
+                        for g in alloc.guests.all():
+                            if getattr(g, 'checked_out_at', None):
+                                return g.checked_out_at
+            if hasattr(obj, 'timeline_events'):
+                evt = obj.timeline_events.filter(event_type__icontains='CHECK_OUT').order_by('-created_at').first()
+                if evt:
+                    return evt.created_at
+            return obj.updated_at
+        return None
 
 
 
