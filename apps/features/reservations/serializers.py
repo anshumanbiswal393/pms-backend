@@ -1265,6 +1265,15 @@ class RoomChangeSerializer(serializers.Serializer):
     def validate(self, attrs):
         if not attrs.get('new_room_id') and not attrs.get('room_id'):
             raise serializers.ValidationError({'new_room_id': 'Target room ID is required.'})
+        new_ci = attrs.get('new_check_in_date')
+        if new_ci:
+            from django.utils import timezone
+            today = timezone.localdate() if hasattr(timezone, 'localdate') else timezone.now().date()
+            if new_ci < today:
+                raise serializers.ValidationError({'new_check_in_date': 'Check-in date cannot be moved to past dates.'})
+        new_co = attrs.get('new_check_out_date')
+        if new_ci and new_co and new_co <= new_ci:
+            raise serializers.ValidationError({'new_check_out_date': 'Check-out date must be strictly after check-in date.'})
         return attrs
 
 
