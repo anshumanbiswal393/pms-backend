@@ -101,14 +101,15 @@ class InventoryLockManager:
         cls,
         tenant,
         property_obj,
-        unit_type,
-        check_in_date: date,
-        check_out_date: date,
-        requested_rooms: int = 1,
-        exclude_reservation_id: Optional[str] = None
+        *args,
+        **kwargs
     ) -> int:
         """
         Atomically calculates the true available capacity for a unit type between check_in and check_out.
+        Supports both signatures:
+        1. verify_inventory_capacity(tenant, property_obj, allocations_data)
+        2. verify_inventory_capacity(tenant, property_obj, unit_type, check_in_date, check_out_date, requested_rooms=1, exclude_reservation_id=None)
+
         Takes into account:
         - Total operational physical units of this type
         - Overlapping confirmed/pending reservations
@@ -117,9 +118,73 @@ class InventoryLockManager:
         Returns the minimum available rooms count across all nights of the stay.
         Raises ValidationError if available rooms < requested_rooms.
         """
-        from apps.features.inventory.models import InventoryUnit
+        from apps.features.inventory.models import InventoryUnit, InventoryUnitType
         from apps.features.reservations.models import ReservationInventory
         from apps.features.availability.models import InventoryHold
+
+        # Handle batch allocations signature: verify_inventory_capacity(tenant, property_obj, allocations_data)
+        if len(args) == 1 and isinstance(args[0], (list, tuple)):
+            allocations = args[0]
+            exclude_res_id = kwargs.get('exclude_reservation_id')
+            min_avail_overall = 999999
+            for alloc in allocations:
+                unit_type_id = alloc.get('inventory_unit_type_id') or alloc.get('unit_type_id')
+                if not unit_type_id:
+                    continue
+                if isinstance(unit_type_id, InventoryUnitType):
+                    ut_obj = unit_type_id
+                else:
+                    try:
+                        ut_obj = InventoryUnitType.objects.get(id=unit_type_id, tenant=tenant)
+                    except InventoryUnitType.DoesNotExist:
+                        continue
+
+                ci_val = alloc.get('check_in_date')
+                co_val = alloc.get('check_out_date')
+                if isinstance(ci_val, str):
+                    ci_date = date.fromisoformat(ci_val[:10])
+                elif isinstance(ci_val, datetime):
+                    ci_date = ci_val.date()
+                else:
+                    ci_date = ci_val
+
+                if isinstance(co_val, str):
+                    co_date = date.fromisoformat(co_val[:10])
+                elif isinstance(co_val, datetime):
+                    co_date = co_val.date()
+                else:
+                    co_date = co_val
+
+                req_rooms = int(alloc.get('rooms_count') or alloc.get('quantity') or 1)
+                avail = cls.verify_inventory_capacity(
+                    tenant,
+                    property_obj,
+                    ut_obj,
+                    ci_date,
+                    co_date,
+                    req_rooms,
+                    exclude_res_id
+                )
+                if avail < min_avail_overall:
+                    min_avail_overall = avail
+            return min_avail_overall
+
+        # Positional extraction for single unit_type signature
+        unit_type = args[0] if len(args) > 0 else kwargs.get('unit_type')
+        check_in_date = args[1] if len(args) > 1 else kwargs.get('check_in_date')
+        check_out_date = args[2] if len(args) > 2 else kwargs.get('check_out_date')
+        requested_rooms = args[3] if len(args) > 3 else kwargs.get('requested_rooms', 1)
+        exclude_reservation_id = args[4] if len(args) > 4 else kwargs.get('exclude_reservation_id')
+
+        if isinstance(check_in_date, str):
+            check_in_date = date.fromisoformat(check_in_date[:10])
+        elif isinstance(check_in_date, datetime):
+            check_in_date = check_in_date.date()
+
+        if isinstance(check_out_date, str):
+            check_out_date = date.fromisoformat(check_out_date[:10])
+        elif isinstance(check_out_date, datetime):
+            check_out_date = check_out_date.date()
 
         now = timezone.now()
 
