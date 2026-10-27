@@ -96,14 +96,65 @@ class IdempotencyManager:
             return True
 
     @classmethod
-    def complete(cls, tenant_id: str, idempotency_key: str, response_data: Any, status_code: int = 201):
+    def check(cls, *args, **kwargs) -> Tuple[bool, Optional[Any]]:
         """
-        Marks idempotency key as COMPLETED and stores response payload.
+        Convenience wrapper supporting:
+        - check(idempotency_key) -> (is_processing, cached_response)
+        - check(tenant_id, idempotency_key) -> (is_processing, cached_response)
         """
+        if len(args) == 1:
+            tenant_id = None
+            key = args[0]
+        elif len(args) >= 2:
+            tenant_id = args[0]
+            key = args[1]
+        else:
+            tenant_id = kwargs.get("tenant_id")
+            key = kwargs.get("idempotency_key") or kwargs.get("key")
+
+        if not key:
+            return False, None
+
+        is_handled, status_code, response_data = cls.check_idempotency(str(tenant_id or "global"), key)
+        if not is_handled:
+            # Not handled before, try to acquire lock
+            acquired = cls.start_processing(str(tenant_id or "global"), key)
+            if not acquired:
+                return True, None  # is_processing = True
+            return False, None
+
+        if status_code == 409:
+            return True, None
+
+        return False, {"status": status_code, "data": response_data}
+
+    @classmethod
+    def complete(cls, *args, **kwargs):
+        """
+        Supports both:
+        - complete(idempotency_key, response_data, status_code=201)
+        - complete(tenant_id, idempotency_key, response_data, status_code=201)
+        """
+        if len(args) == 2:
+            tenant_id = "global"
+            idempotency_key = args[0]
+            response_data = args[1]
+            status_code = kwargs.get("status_code", 201)
+        elif len(args) >= 3:
+            tenant_id = args[0]
+            idempotency_key = args[1]
+            response_data = args[2]
+            status_code = args[3] if len(args) > 3 else kwargs.get("status_code", 201)
+        else:
+            idempotency_key = kwargs.get("idempotency_key")
+            response_data = kwargs.get("response_data")
+            tenant_id = kwargs.get("tenant_id", "global")
+            status_code = kwargs.get("status_code", 201)
+
         if not idempotency_key:
             return
 
-        cache_key = cls._format_cache_key(tenant_id, idempotency_key)
+        cache_key = cls._format_cache_key(str(tenant_id or "global"), idempotency_key)
         payload = json.dumps({
             "state": "COMPLETED",
             "status_code": status_code,
@@ -115,26 +166,41 @@ class IdempotencyManager:
             logger.warning(f"Error saving completed idempotency for key {idempotency_key}: {e}")
 
     @classmethod
-    def clear(cls, tenant_id: str, idempotency_key: str):
+    def clear(cls, *args, **kwargs):
         """
-        Clears idempotency lock on error so client can retry.
+        Supports both:
+        - clear(idempotency_key)
+        - clear(tenant_id, idempotency_key)
         """
+        if len(args) == 1:
+            tenant_id = "global"
+            idempotency_key = args[0]
+        elif len(args) >= 2:
+            tenant_id = args[0]
+            idempotency_key = args[1]
+        else:
+            tenant_id = kwargs.get("tenant_id", "global")
+            idempotency_key = kwargs.get("idempotency_key")
+
         if not idempotency_key:
             return
 
-        cache_key = cls._format_cache_key(tenant_id, idempotency_key)
+        cache_key = cls._format_cache_key(str(tenant_id or "global"), idempotency_key)
         try:
             cache.delete(cache_key)
         except Exception as e:
             logger.warning(f"Error clearing idempotency key {idempotency_key}: {e}")
 
     @classmethod
-    def extract_key(cls, request) -> Optional[str]:
+    def extract_key(cls, request, default_key: Optional[str] = None) -> Optional[str]:
         """
-        Extracts idempotency key from headers or request payload.
+        Extracts idempotency key from headers or request payload, falling back to default_key.
         Supported headers: 'Idempotency-Key', 'X-Idempotency-Key'
         Supported body fields: 'idempotency_key', 'idempotencyKey'
         """
+        if default_key:
+            return str(default_key).strip()
+
         key = (
             request.headers.get("Idempotency-Key") or
             request.headers.get("X-Idempotency-Key") or

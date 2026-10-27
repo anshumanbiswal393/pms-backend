@@ -520,7 +520,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         idempotency_key = IdempotencyManager.extract_key(request, validated_data.get('idempotency_key'))
         if idempotency_key:
             validated_data['idempotency_key'] = idempotency_key
-            is_processing, cached_response = IdempotencyManager.check(idempotency_key)
+            is_processing, cached_response = IdempotencyManager.check(tenant.id, idempotency_key)
             if is_processing:
                 return Response(
                     {'error': 'A booking with this idempotency key is already in progress. Please do not retry concurrently.'},
@@ -546,7 +546,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 )
         except RushQueueOverwhelmedException as e:
             if idempotency_key:
-                IdempotencyManager.clear(idempotency_key)
+                IdempotencyManager.clear(tenant.id, idempotency_key)
             return Response(
                 {'error': str(e), 'code': 'RUSH_QUEUE_OVERWHELMED'},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -554,14 +554,14 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             )
         except (serializers.ValidationError, DjangoValidationError) as e:
             if idempotency_key:
-                IdempotencyManager.clear(idempotency_key)
+                IdempotencyManager.clear(tenant.id, idempotency_key)
             detail = e.messages if hasattr(e, 'messages') else (e.detail if hasattr(e, 'detail') else str(e))
             if isinstance(detail, list) and len(detail) == 1:
                 detail = detail[0]
             return Response({'error': detail, 'detail': detail}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             if idempotency_key:
-                IdempotencyManager.clear(idempotency_key)
+                IdempotencyManager.clear(tenant.id, idempotency_key)
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         self._invalidate_cache()
@@ -570,7 +570,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
 
         # Store completed result in idempotency cache
         if idempotency_key:
-            IdempotencyManager.complete(idempotency_key, response_data, status_code=status.HTTP_201_CREATED)
+            IdempotencyManager.complete(tenant.id, idempotency_key, response_data, status_code=status.HTTP_201_CREATED)
 
         return Response(response_data, status=status.HTTP_201_CREATED)
 
