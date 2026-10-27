@@ -124,6 +124,7 @@ def get_scoped_rooms_and_property(request):
                 is_active=True,
                 base_rate__gt=0
             ).order_by('base_rate').first()
+            price = float(rate_obj.base_rate) if rate_obj else (float(b_room.base_price) if b_room else 0.0)
             
             # Resolve actual total operational physical units belonging to this room type
             from apps.features.inventory.models import InventoryUnit
