@@ -579,7 +579,7 @@ def su_rates_view(request):
     from datetime import date, timedelta
     from apps.booking.models import RoomInventory
 
-    _, rooms = get_scoped_rooms_and_property(request)
+    property_obj, rooms = get_scoped_rooms_and_property(request)
     today = date.today()
     start_date_str = request.query_params.get('start_date')
     days_count = int(request.query_params.get('days', 10))
@@ -600,24 +600,49 @@ def su_rates_view(request):
         else:
             start_date = today
 
+    from apps.features.rates.models import RatePlan, RatePlanInventoryType
+
     result = []
     for day_offset in range(days_count):
         target_date = start_date + timedelta(days=day_offset)
         day_num = target_date.day
 
         for r in rooms:
+            ut = r.get("unit_type")
             b_room = r.get("booking_room")
-            inv = RoomInventory.objects.filter(room_type=b_room, date=target_date).first() if b_room else None
-            price = float(inv.custom_price) if (inv and inv.custom_price) else r["base_price"]
 
-            result.append({
-                "date": day_num,
-                "fullDate": target_date.strftime("%Y-%m-%d"),
-                "roomType": r["name"],
-                "ratePlan": "BAR Flexible",
-                "amount": price,
-                "currency": "INR"
-            })
+            # Find all rate plan inventory mappings configured for this room category
+            rpi_qs = RatePlanInventoryType.objects.filter(
+                inventory_unit_type=ut,
+                is_active=True
+            ).select_related('rate_plan') if ut else RatePlanInventoryType.objects.none()
+
+            if rpi_qs.exists():
+                for rpi in rpi_qs:
+                    plan_name = rpi.rate_plan.name if rpi.rate_plan else "BAR Flexible"
+                    price = float(rpi.base_rate) if rpi.base_rate > 0 else r["base_price"]
+
+                    result.append({
+                        "date": day_num,
+                        "fullDate": target_date.strftime("%Y-%m-%d"),
+                        "roomType": r["name"],
+                        "ratePlan": plan_name,
+                        "ratePlanId": str(rpi.rate_plan.id) if rpi.rate_plan else None,
+                        "amount": price,
+                        "currency": "INR"
+                    })
+            else:
+                inv = RoomInventory.objects.filter(room_type=b_room, date=target_date).first() if b_room else None
+                price = float(inv.custom_price) if (inv and inv.custom_price) else r["base_price"]
+
+                result.append({
+                    "date": day_num,
+                    "fullDate": target_date.strftime("%Y-%m-%d"),
+                    "roomType": r["name"],
+                    "ratePlan": "BAR Flexible",
+                    "amount": price,
+                    "currency": "INR"
+                })
 
     return Response(result, status=status.HTTP_200_OK)
 
