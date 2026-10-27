@@ -125,8 +125,14 @@ def get_scoped_rooms_and_property(request):
                 base_rate__gt=0
             ).order_by('base_rate').first()
             
-            price = float(rate_obj.base_rate) if (rate_obj and rate_obj.base_rate > 0) else (float(b_room.base_price) if (b_room and b_room.base_price) else 2500.0)
-            total = b_room.total_rooms if b_room else 10
+            # Resolve actual total operational physical units belonging to this room type
+            from apps.features.inventory.models import InventoryUnit
+            actual_unit_count = InventoryUnit.objects.filter(
+                inventory_unit_type=ut,
+                property=property_obj,
+                deleted_at__isnull=True
+            ).count()
+            total = actual_unit_count if actual_unit_count > 0 else (b_room.total_rooms if b_room else 10)
 
             room_items.append({
                 "code": ut.code,
@@ -523,7 +529,7 @@ def su_availability_view(request):
     from datetime import date, timedelta
     from apps.booking.models import RoomInventory
 
-    _, rooms = get_scoped_rooms_and_property(request)
+    property_obj, rooms = get_scoped_rooms_and_property(request)
     today = date.today()
     start_date_str = request.query_params.get('start_date')
     days_count = int(request.query_params.get('days', 10))
@@ -544,23 +550,89 @@ def su_availability_view(request):
         else:
             start_date = today
 
+    from apps.features.reservations.models import Reservation, ReservationInventory
+    from apps.features.availability.models import GroupBlock
+    from apps.booking.models import RoomInventory
+    from django.db.models import Q
+
+    end_date = start_date + timedelta(days=days_count)
+
+    # Pre-fetch reservations with room allocations in this date range
+    reservations_qs = list(
+        Reservation.objects.filter(
+            property=property_obj,
+            arrival_date__lt=end_date,
+            departure_date__gt=start_date,
+            deleted_at__isnull=True
+        ).exclude(
+            status__in=['CANCELLED', 'NO_SHOW']
+        ).prefetch_related('room_allocations')
+    ) if property_obj else []
+
+    # Pre-fetch active group blocks
+    group_blocks_qs = list(
+        GroupBlock.objects.filter(
+            property=property_obj,
+            start_date__lt=end_date,
+            end_date__gt=start_date,
+            deleted_at__isnull=True
+        ).exclude(
+            status__in=['CLOSED', 'CANCELLED', 'RELEASED']
+        )
+    ) if property_obj else []
+
     result = []
     for day_offset in range(days_count):
         target_date = start_date + timedelta(days=day_offset)
+        next_date = target_date + timedelta(days=1)
         day_num = target_date.day
 
         for r in rooms:
+            ut = r.get("unit_type")
             b_room = r.get("booking_room")
-            inv = RoomInventory.objects.filter(room_type=b_room, date=target_date).first() if b_room else None
             total_rooms = r["total_rooms"]
-            available = inv.available_rooms if inv else total_rooms
+
+            # 1. Occupied rooms via ReservationInventory allocations
+            occupied_count = 0
+            if ut:
+                for res in reservations_qs:
+                    allocs = list(res.room_allocations.all())
+                    if allocs:
+                        for alloc in allocs:
+                            if alloc.inventory_unit_type_id == ut.id:
+                                if alloc.check_in_date < next_date and alloc.check_out_date > target_date:
+                                    occupied_count += 1
+                    else:
+                        # Fallback if allocations not populated yet
+                        if res.arrival_date < next_date and res.departure_date > target_date:
+                            if res.inventory_unit_type_id == ut.id or getattr(res, 'unit_type_id', None) == ut.id:
+                                occupied_count += 1
+
+            # 2. Blocked rooms via GroupBlock
+            blocked_count = 0
+            if ut:
+                for gb in group_blocks_qs:
+                    if gb.start_date and gb.end_date:
+                        if gb.start_date <= target_date and gb.end_date > target_date:
+                            room_sels = gb.room_selections or []
+                            for sel in room_sels:
+                                sel_type_id = sel.get('inventory_unit_type_id') or sel.get('unit_type_id')
+                                sel_type_name = (sel.get('room_type') or sel.get('unit_type') or '').strip().lower()
+                                if sel_type_id == str(ut.id) or sel_type_name == ut.name.strip().lower():
+                                    blocked_count += int(sel.get('quantity') or 1)
+
+            # Check manual block from RoomInventory if any
+            inv = RoomInventory.objects.filter(room_type=b_room, date=target_date).first() if b_room else None
             stop_sell = inv.is_blocked if inv else False
+
+            sold = occupied_count + blocked_count
+            available = max(0, total_rooms - sold)
 
             result.append({
                 "date": day_num,
                 "fullDate": target_date.strftime("%Y-%m-%d"),
                 "roomType": r["name"],
-                "available": max(0, available),
+                "available": available,
                 "total": total_rooms,
                 "stopSell": stop_sell
             })
