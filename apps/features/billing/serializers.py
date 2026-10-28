@@ -59,6 +59,20 @@ class CreditNoteSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class BillingAdjustmentSerializer(serializers.ModelSerializer):
+    folio_number = serializers.CharField(source='folio.folio_number', read_only=True)
+    reservation_id = serializers.CharField(source='folio.reservation.id', read_only=True)
+    confirmation_number = serializers.CharField(source='folio.reservation.confirmation_number', read_only=True)
+    guest_name = serializers.SerializerMethodField()
+
+    def get_guest_name(self, obj):
+        try:
+            if obj.folio and obj.folio.reservation and obj.folio.reservation.primary_guest:
+                g = obj.folio.reservation.primary_guest
+                return f"{g.first_name} {g.last_name}".strip()
+        except Exception:
+            pass
+        return "Guest"
+
     class Meta:
         model = BillingAdjustment
         fields = '__all__'
