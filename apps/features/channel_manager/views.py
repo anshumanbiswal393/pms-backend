@@ -673,7 +673,7 @@ def su_rates_view(request):
         else:
             start_date = today
 
-    from apps.features.rates.models import RatePlan, RatePlanInventoryType
+    from apps.features.rates.models import RatePlan, RatePlanInventoryType, RateCalendar
 
     result = []
     for day_offset in range(days_count):
@@ -684,7 +684,7 @@ def su_rates_view(request):
             ut = r.get("unit_type")
             b_room = r.get("booking_room")
 
-            # Find all rate plan inventory mappings configured for this room category
+            # Find all active rate plan inventory mappings configured for this room category
             rpi_qs = RatePlanInventoryType.objects.filter(
                 inventory_unit_type=ut,
                 is_active=True
@@ -693,7 +693,17 @@ def su_rates_view(request):
             if rpi_qs.exists():
                 for rpi in rpi_qs:
                     plan_name = rpi.rate_plan.name if rpi.rate_plan else "BAR Flexible"
-                    price = float(rpi.base_rate) if rpi.base_rate > 0 else r["base_price"]
+                    # Check if a date-specific override exists in RateCalendar
+                    cal_entry = RateCalendar.objects.filter(
+                        inventory_unit_type=ut,
+                        rate_plan=rpi.rate_plan,
+                        date=target_date
+                    ).first() if ut and rpi.rate_plan else None
+
+                    if cal_entry and cal_entry.amount is not None:
+                        price = float(cal_entry.amount)
+                    else:
+                        price = float(rpi.base_rate) if rpi.base_rate is not None else 0.0
 
                     result.append({
                         "date": day_num,
