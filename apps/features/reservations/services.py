@@ -935,7 +935,17 @@ class BookingEngine:
 
         explicit_total = booking_data.get('total_amount') or booking_data.get('totalAmount')
         if explicit_total is not None and Decimal(str(explicit_total)) > Decimal('0.00'):
-            total_amount = max(total_amount, Decimal(str(explicit_total)))
+            exp_val = Decimal(str(explicit_total))
+            # If explicit_total matches computed total_amount + tax_amount (i.e. gross final price),
+            # don't overwrite pre-tax total_amount with gross to prevent double-counting taxes.
+            if exp_val == (total_amount + tax_amount):
+                pass
+            elif exp_val > total_amount:
+                # If explicit_total was supplied as gross including taxes, keep pre-tax total_amount accurate
+                if tax_amount > Decimal('0.00') and (exp_val - tax_amount) >= total_amount:
+                    total_amount = exp_val - tax_amount
+                else:
+                    total_amount = exp_val
 
         paid_val = Decimal(str(booking_data.get('paid_amount') or booking_data.get('paidAmount') or '0.00'))
         if total_amount == Decimal('0.00') and paid_val > Decimal('0.00'):
