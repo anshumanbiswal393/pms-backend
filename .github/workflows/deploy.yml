@@ -19,23 +19,38 @@ jobs:
           fetch-depth: 0
 
       - name: Set up SSH
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_PORT: ${{ secrets.VM_PORT }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -p ${{ secrets.VM_PORT }} ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
+          touch ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          # OpenSSH 9.x often returns 1 if rsa is disabled even after a successful banner.
+          for key_type in ed25519 ecdsa rsa; do
+            ssh-keyscan -4 -T 20 -t "$key_type" -p "$VM_PORT" "$VM_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          done
+          if ! grep -qE 'ssh-(ed25519|rsa)|ecdsa-sha2' ~/.ssh/known_hosts; then
+            echo "Could not collect SSH host keys for ${VM_HOST}:${VM_PORT}"
+            ssh-keyscan -4 -T 20 -v -p "$VM_PORT" "$VM_HOST" || true
+            exit 1
+          fi
 
       - name: Sync files to VM
         run: |
           rsync -avz --delete \
             --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' --exclude='.venv' \
             --exclude='media' --exclude='staticfiles' --exclude='db.sqlite3' --exclude='.env' \
-            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.VM_PORT }}" \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.VM_PORT }} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
             ./ ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:/opt/retrod/retrod-one-backend/
 
       - name: Build and restart backend
         run: |
-          ssh -i ~/.ssh/deploy_key -p ${{ secrets.VM_PORT }} ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.VM_PORT }} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "
             cd /opt/retrod/retrod-one-backend &&
             docker compose build backend &&
             docker compose up -d backend &&
