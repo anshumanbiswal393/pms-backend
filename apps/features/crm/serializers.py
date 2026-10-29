@@ -14,6 +14,10 @@ class GuestProfileSerializer(serializers.ModelSerializer):
     phone = serializers.SerializerMethodField()
     primary_address = serializers.SerializerMethodField()
     address = serializers.SerializerMethodField()
+    city = serializers.SerializerMethodField()
+    state = serializers.SerializerMethodField()
+    postal_code = serializers.SerializerMethodField()
+    company = serializers.SerializerMethodField()
     country = serializers.SerializerMethodField()
     tier = serializers.SerializerMethodField()
     visits = serializers.SerializerMethodField()
@@ -37,7 +41,7 @@ class GuestProfileSerializer(serializers.ModelSerializer):
             'loyalty_points', 'nps_score', 'nps', 'vip_notes', 'email_opt_in', 'sms_opt_in',
             'whatsapp_opt_in', 'total_stays', 'visits', 'total_nights', 'last_stay_date', 'is_active',
             'created_at', 'updated_at', 'created_by', 'updated_by', 'primary_email', 'email',
-            'primary_phone', 'phone', 'primary_address', 'address', 'country', 'ltv',
+            'primary_phone', 'phone', 'primary_address', 'address', 'city', 'state', 'postal_code', 'company', 'country', 'ltv',
             'stays', 'notes', 'preferences', 'tags',
             'id_type', 'id_number', 'id_proof_url'
         )
@@ -80,6 +84,28 @@ class GuestProfileSerializer(serializers.ModelSerializer):
 
     def get_address(self, obj):
         return self.get_primary_address(obj)
+
+    def get_city(self, obj):
+        primary_contact = obj.contacts.filter(is_primary=True).first() or obj.contacts.first()
+        return primary_contact.city if primary_contact else ""
+
+    def get_state(self, obj):
+        primary_contact = obj.contacts.filter(is_primary=True).first() or obj.contacts.first()
+        return primary_contact.state if primary_contact else ""
+
+    def get_postal_code(self, obj):
+        primary_contact = obj.contacts.filter(is_primary=True).first() or obj.contacts.first()
+        return primary_contact.postal_code if primary_contact else ""
+
+    def get_company(self, obj):
+        try:
+            from apps.features.reservations.models import Reservation
+            res = Reservation.objects.filter(tenant=obj.tenant, primary_guest=obj).select_related('corporate_account').exclude(corporate_account__isnull=True).first()
+            if res and res.corporate_account:
+                return res.corporate_account.company_name
+        except Exception:
+            pass
+        return ""
 
     def get_country(self, obj):
         primary_contact = obj.contacts.filter(is_primary=True).first() or obj.contacts.first()
