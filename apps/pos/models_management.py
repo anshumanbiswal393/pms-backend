@@ -30,6 +30,14 @@ class POSOutletConfig(BaseModel):
     connected_services = models.JSONField(default=dict, blank=True)
     print_settings = models.JSONField(default=dict, blank=True)
     customer_settings = models.JSONField(default=dict, blank=True)
+    service_mode = models.JSONField(default=dict, blank=True)
+    integrations = models.JSONField(default=dict, blank=True)
+    billing_preferences = models.JSONField(default=dict, blank=True)
+    step_status = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Per-step progress: not_started | in_progress | completed',
+    )
 
     class Meta:
         app_label = 'pos'

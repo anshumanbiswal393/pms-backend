@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from rest_framework import serializers
 from apps.POS.models import (
     Outlet,
@@ -632,6 +634,14 @@ class MenuItemWriteSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+        extra_kwargs = {
+            "tax_profile": {"required": False, "allow_null": True},
+            "online_display_name": {"required": False, "allow_blank": True, "allow_null": True},
+            "description": {"required": False, "allow_blank": True, "allow_null": True},
+            "images": {"required": False},
+            "next_available_at": {"required": False, "allow_null": True},
+            "meta": {"required": False},
+        }
 
     def to_internal_value(self, data):
         data = dict(data or {})
@@ -639,26 +649,31 @@ class MenuItemWriteSerializer(serializers.ModelSerializer):
             data["outlet"] = data["outletId"]
         if data.get("outlet_id") and not data.get("outlet"):
             data["outlet"] = data["outlet_id"]
+        for blank_fk in ("tax_profile", "taxProfileId", "tax_profile_id", "categoryId", "category_id"):
+            if data.get(blank_fk) in ("", None):
+                data.pop(blank_fk, None)
         category_raw = data.get("categoryId") or data.get("category_id") or data.get("category")
         outlet_raw = data.get("outlet")
         if category_raw and outlet_raw:
             cat = None
+            cat_key = str(category_raw).strip()
             try:
+                UUID(cat_key)
                 cat = MenuCategory.objects.filter(
-                    pk=category_raw, deleted_at__isnull=True
+                    pk=cat_key, deleted_at__isnull=True
                 ).first()
             except (ValueError, TypeError):
                 cat = None
-            if not cat:
+            if not cat and cat_key:
                 cat = MenuCategory.objects.filter(
                     outlet_id=outlet_raw,
-                    name__iexact=str(category_raw).strip(),
+                    name__iexact=cat_key,
                     deleted_at__isnull=True,
                 ).first()
-            if not cat and str(category_raw).strip():
+            if not cat and cat_key:
                 cat = MenuCategory.objects.create(
                     outlet_id=outlet_raw,
-                    name=str(category_raw).strip(),
+                    name=cat_key,
                     is_active=True,
                 )
             if cat:
@@ -883,8 +898,12 @@ class POSOrderCreateSerializer(serializers.Serializer):
     paymentMode = serializers.CharField(required=False, allow_null=True)
     mark_settled = serializers.BooleanField(required=False, default=False)
     markSettled = serializers.BooleanField(required=False)
-    send_kot = serializers.BooleanField(required=False, default=True)
+    send_kot = serializers.BooleanField(required=False)
     sendKot = serializers.BooleanField(required=False)
+    held = serializers.BooleanField(required=False)
+    isHeld = serializers.BooleanField(required=False)
+    meta = serializers.JSONField(required=False)
+    heldCart = serializers.JSONField(required=False)
     items = POSOrderItemInputSerializer(many=True)
 
     def to_internal_value(self, data):
@@ -948,6 +967,12 @@ class POSOrderUpdateSerializer(serializers.Serializer):
         max_digits=12, decimal_places=2, required=False
     )
     items = POSOrderItemInputSerializer(many=True, required=False)
+    send_kot = serializers.BooleanField(required=False)
+    sendKot = serializers.BooleanField(required=False)
+    held = serializers.BooleanField(required=False)
+    isHeld = serializers.BooleanField(required=False)
+    meta = serializers.JSONField(required=False)
+    heldCart = serializers.JSONField(required=False)
 
 
 class POSSettlePaymentLegSerializer(serializers.Serializer):

@@ -140,6 +140,30 @@ class DueLedgerService:
         return bill
 
     @classmethod
+    def close_for_order(cls, order: POSOrder, *, mode: str = "CASH", user=None) -> None:
+        """Mark every open due bill for a fully paid order as settled."""
+        now = timezone.now()
+        bills = POSDueBill.objects.filter(
+            order=order, deleted_at__isnull=True
+        ).exclude(status="SETTLED")
+        for bill in bills:
+            bill.paid_amount = bill.total_amount
+            bill.due_amount = Decimal("0.00")
+            bill.status = "SETTLED"
+            bill.settlement_mode = mode
+            bill.settled_at = now
+            bill.save(
+                update_fields=[
+                    "paid_amount",
+                    "due_amount",
+                    "status",
+                    "settlement_mode",
+                    "settled_at",
+                    "updated_at",
+                ]
+            )
+
+    @classmethod
     def list_dues(
         cls,
         *,
@@ -160,8 +184,19 @@ class DueLedgerService:
         if tenant_id:
             open_orders_qs = open_orders_qs.filter(tenant_id=tenant_id)
 
+        existing_order_ids = set(
+            POSDueBill.objects.filter(
+                deleted_at__isnull=True,
+                order_id__in=open_orders_qs.values_list("id", flat=True),
+            ).values_list("order_id", flat=True)
+        )
         for o in open_orders_qs:
-            cls.create_for_order(o, paid_amount=Decimal("0.00"))
+            if o.id in existing_order_ids:
+                continue
+            try:
+                cls.create_for_order(o, paid_amount=Decimal("0.00"))
+            except Exception:
+                continue
 
         qs = (
             POSDueBill.objects.filter(deleted_at__isnull=True, order__deleted_at__isnull=True)
@@ -269,10 +304,10 @@ class DueLedgerService:
             order.payment_mode = mode
             order.save(update_fields=["status", "settled_at", "payment_mode", "updated_at"])
             OrderService._record_status(order, prev_status, "SETTLED", note=f"Settled via {mode}", user=user)
-            # Mark all KOT tickets as SERVED so they clear from kitchen display
-            KOTTicket.objects.filter(
-                order=order, status__in=("PENDING", "PREPARING", "READY")
-            ).update(status="SERVED", ready_at=now)
+            # Ready tickets leave KOT; uncooked tickets stay so the kitchen can cook.
+            KOTTicket.objects.filter(order=order, status="READY").update(
+                status="SERVED", ready_at=now
+            )
             OrderService._release_table(order)
             from apps.POS.services.stock import StockService
             try:

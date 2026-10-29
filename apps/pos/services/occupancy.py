@@ -148,4 +148,103 @@ class OccupancyService:
                 )
 
         rooms.sort(key=lambda r: (r.get("room_number") or "", r.get("confirmation_number") or ""))
+        cls._attach_pos_orders(rooms, property_id=property_id)
         return rooms
+
+    @classmethod
+    def _attach_pos_orders(cls, rooms: list[dict[str, Any]], *, property_id=None) -> None:
+        """Attach POS F&B orders (KOT / folio) so Room View can show order-price."""
+        for room in rooms:
+            room.setdefault("pos_orders", [])
+            room.setdefault("pos_charge_total", 0.0)
+        if not rooms:
+            return
+
+        try:
+            from django.db.models import Q
+
+            from apps.POS.models import POSOrder
+        except Exception:
+            return
+
+        def _room_key(value: str | None) -> str:
+            return str(value or "").replace("Room ", "").replace("ROOM ", "").strip()
+
+        res_ids = [r["reservation_id"] for r in rooms if r.get("reservation_id")]
+        room_numbers = [_room_key(r.get("room_number")) for r in rooms if r.get("room_number")]
+        room_numbers = [n for n in room_numbers if n]
+        if not res_ids and not room_numbers:
+            return
+
+        lookup = Q()
+        if res_ids:
+            lookup |= Q(reservation_id__in=res_ids)
+        if room_numbers:
+            lookup |= Q(room_number__in=room_numbers)
+
+        pos_qs = (
+            POSOrder.objects.filter(
+                deleted_at__isnull=True,
+                status__in=("PLACED", "PREPARED", "SETTLED"),
+            )
+            .filter(lookup)
+            .prefetch_related("items")
+            .order_by("-placed_at", "-created_at")
+        )
+        if property_id:
+            pos_qs = pos_qs.filter(property_id=property_id)
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for order in pos_qs:
+            items = [
+                {
+                    "name": i.item_name + (f" ({i.variant_name})" if i.variant_name else ""),
+                    "quantity": float(i.quantity),
+                    "unitPrice": float(i.unit_price),
+                }
+                for i in order.items.all()
+                if not i.is_void
+            ]
+            summary = ", ".join(
+                f"{it['name']} × {int(it['quantity']) if float(it['quantity']).is_integer() else it['quantity']}"
+                for it in items
+            )
+            placed = order.placed_at or order.created_at
+            payload = {
+                "id": str(order.id),
+                "orderNumber": order.order_number,
+                "totalAmount": float(order.grand_total),
+                "itemsSummary": summary,
+                "items": items,
+                "createdAt": placed.strftime("%d %b %Y %H:%M") if placed else "",
+                "paymentMode": (
+                    "Add to Room Folio"
+                    if order.payment_mode == "ROOM_CHARGE"
+                    else (order.payment_mode or "")
+                ),
+                "status": order.status,
+            }
+            keys = []
+            if order.reservation_id:
+                keys.append(f"res:{order.reservation_id}")
+            rn = _room_key(order.room_number)
+            if rn:
+                keys.append(f"room:{rn}")
+            for key in keys:
+                grouped.setdefault(key, []).append(payload)
+
+        for room in rooms:
+            room_key = f"room:{_room_key(room.get('room_number'))}"
+            res_key = f"res:{room.get('reservation_id')}" if room.get("reservation_id") else None
+            seen: set[str] = set()
+            attached: list[dict[str, Any]] = []
+            for key in (res_key, room_key):
+                if not key:
+                    continue
+                for row in grouped.get(key, []):
+                    if row["id"] in seen:
+                        continue
+                    seen.add(row["id"])
+                    attached.append(row)
+            room["pos_orders"] = attached
+            room["pos_charge_total"] = float(sum(o["totalAmount"] for o in attached))

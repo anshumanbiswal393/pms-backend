@@ -192,8 +192,37 @@ class OutletConfigService:
                     'autoCreateOnBill': 'Yes',
                     'showLastOrders': 'Yes',
                 },
+                'service_mode': {
+                    'dineIn': 'Yes',
+                    'takeaway': 'Yes',
+                    'roomService': 'Yes',
+                    'delivery': 'Yes',
+                    'autoAcceptDelivery': 'No',
+                    'printToken': 'Yes',
+                },
+                'integrations': {
+                    'aggregatorSync': 'No',
+                    'pmsRoomService': 'Yes',
+                    'whatsappBill': 'No',
+                    'smsBill': 'No',
+                    'paymentGateway': 'No',
+                },
+                'billing_preferences': {
+                    'currency': outlet.currency or 'INR',
+                    'symbol': '₹',
+                    'decimalPlaces': '2',
+                    'symbolPosition': 'Before',
+                    'allowSplitPayment': 'Yes',
+                    'roundOffBills': 'Yes',
+                },
+                'step_status': {},
             }
         )
+        if not isinstance(config.step_status, dict):
+            config.step_status = {}
+        nested = (config.connected_services or {}).get('step_status')
+        if not config.step_status and isinstance(nested, dict):
+            config.step_status = nested
         return config
 
     @staticmethod
@@ -270,6 +299,43 @@ class OutletConfigService:
             if isinstance(cust, dict):
                 config.customer_settings.update(cust)
 
+        if 'service_mode' in data or 'serviceMode' in data or 'service_modes' in data or 'serviceModes' in data:
+            sm = (
+                data.get('service_mode')
+                or data.get('serviceMode')
+                or data.get('service_modes')
+                or data.get('serviceModes')
+            )
+            if isinstance(sm, dict):
+                current_sm = config.service_mode if isinstance(config.service_mode, dict) else {}
+                current_sm.update(sm)
+                config.service_mode = current_sm
+
+        if 'integrations' in data and isinstance(data['integrations'], dict):
+            current_int = config.integrations if isinstance(config.integrations, dict) else {}
+            current_int.update(data['integrations'])
+            config.integrations = current_int
+
+        if 'billing_preferences' in data or 'billingPreferences' in data:
+            bp = data.get('billing_preferences') or data.get('billingPreferences')
+            if isinstance(bp, dict):
+                current_bp = config.billing_preferences if isinstance(config.billing_preferences, dict) else {}
+                current_bp.update(bp)
+                config.billing_preferences = current_bp
+
+        if 'step_status' in data or 'stepStatus' in data:
+            ss = data.get('step_status') or data.get('stepStatus')
+            if isinstance(ss, dict):
+                rank = {'not_started': 0, 'in_progress': 1, 'completed': 2}
+                cur_ss = config.step_status if isinstance(config.step_status, dict) else {}
+                for key, value in ss.items():
+                    prev = cur_ss.get(key, 'not_started')
+                    if rank.get(str(value), 0) >= rank.get(str(prev), 0):
+                        cur_ss[key] = value
+                    elif key not in cur_ss:
+                        cur_ss[key] = value
+                config.step_status = cur_ss
+
         config.save()
 
         # Keep Outlet meta_settings synced with the updated full state
@@ -281,6 +347,10 @@ class OutletConfigService:
             'payment': config.payment,
             'calculations': config.calculations,
             'connected_services': config.connected_services,
+            'service_mode': config.service_mode,
+            'integrations': config.integrations,
+            'billing_preferences': config.billing_preferences,
+            'step_status': config.step_status,
         })
         outlet.meta_settings = meta
         outlet.save()

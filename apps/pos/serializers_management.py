@@ -53,6 +53,10 @@ class POSOutletConfigSerializer(serializers.ModelSerializer):
             'connected_services',
             'print_settings',
             'customer_settings',
+            'service_mode',
+            'integrations',
+            'billing_preferences',
+            'step_status',
             'created_at',
             'updated_at',
         ]

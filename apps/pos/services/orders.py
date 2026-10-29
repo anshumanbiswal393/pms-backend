@@ -54,7 +54,7 @@ PAYMENT_UI = {
     "CASH": "Cash",
     "CARD": "Card",
     "UPI": "UPI",
-    "ROOM_CHARGE": "Room Charge",
+    "ROOM_CHARGE": "Add to Room Folio",
     "SPLIT": "Split",
     "DUE": "Due",
 }
@@ -94,6 +94,68 @@ class OrderService:
         }
 
     @classmethod
+    def _truthy(cls, value: Any) -> bool:
+        if value is False or value is None or value == 0 or value == "":
+            return False
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "yes")
+        return bool(value)
+
+    @classmethod
+    def _wants_kot(cls, data: dict[str, Any], *, default: bool = True) -> bool:
+        # Prefer an explicit False from either camelCase or snake_case so HOLD
+        # (sendKot: false) is not overwritten by serializer defaults.
+        if data.get("sendKot") is False or data.get("send_kot") is False:
+            return False
+        if data.get("sendKot") is True or data.get("send_kot") is True:
+            return True
+        if "sendKot" in data:
+            return cls._truthy(data.get("sendKot"))
+        if "send_kot" in data:
+            return cls._truthy(data.get("send_kot"))
+        return default
+
+    @classmethod
+    def _wants_held(cls, data: dict[str, Any]) -> bool:
+        if data.get("held") is False or data.get("isHeld") is False:
+            return False
+        if "held" in data:
+            return cls._truthy(data.get("held"))
+        if "isHeld" in data:
+            return cls._truthy(data.get("isHeld"))
+        meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+        return cls._truthy(meta.get("held"))
+
+    @classmethod
+    def _apply_held_meta(cls, order: POSOrder, data: dict[str, Any]) -> None:
+        meta = dict(order.meta or {})
+        incoming = data.get("meta")
+        if isinstance(incoming, dict):
+            meta.update(incoming)
+        if any(k in data for k in ("held", "isHeld")):
+            if cls._wants_held(data):
+                meta["held"] = True
+            else:
+                meta.pop("held", None)
+                meta.pop("heldCart", None)
+        if data.get("heldCart") is not None:
+            meta["heldCart"] = data.get("heldCart")
+        order.meta = meta
+
+    @classmethod
+    def _ensure_due_for_open_order(cls, order: POSOrder, *, user=None) -> None:
+        if order.status == "SETTLED" or bool((order.meta or {}).get("held")):
+            return
+        from apps.POS.models import POSDueBill
+        if POSDueBill.objects.filter(order=order, deleted_at__isnull=True).exists():
+            return
+        from apps.POS.services.dues import DueLedgerService
+        try:
+            DueLedgerService.create_for_order(order, paid_amount=Decimal("0.00"), user=user)
+        except Exception:
+            pass
+
+    @classmethod
     def serialize_order(cls, order: POSOrder) -> dict[str, Any]:
         items = [cls.serialize_item(i) for i in order.items.all() if not i.is_void]
         items_summary = ", ".join(
@@ -115,23 +177,24 @@ class OrderService:
             elapsed = max(1, int((timezone.now() - placed).total_seconds() // 60))
 
         table_or_room = order.table_number or order.room_number or ""
+        effective_type = cls._effective_order_type(order)
         source = ""
-        if order.order_type == "DINE_IN" and table_or_room:
+        if effective_type == "DINE_IN" and table_or_room:
             source = f"Table {table_or_room}"
             if order.section_name:
                 source += f" ({order.section_name})"
-        elif order.order_type == "ROOM_SERVICE" and order.room_number:
+        elif effective_type == "ROOM_SERVICE" and order.room_number:
             source = f"Room {order.room_number}"
         else:
-            source = ORDER_TYPE_UI.get(order.order_type, order.order_type)
+            source = ORDER_TYPE_UI.get(effective_type, effective_type)
 
         return {
             "id": str(order.id),
             "orderNumber": order.order_number,
             "order_number": order.order_number,
-            "type": order.order_type.lower(),
-            "orderType": order.order_type,
-            "typeLabel": ORDER_TYPE_UI.get(order.order_type, order.order_type),
+            "type": effective_type.lower(),
+            "orderType": effective_type,
+            "typeLabel": ORDER_TYPE_UI.get(effective_type, effective_type),
             "status": order.status,
             "currentStage": STATUS_UI.get(order.status, order.status.lower()),
             "stageLabel": STAGE_LABEL.get(order.status, order.status),
@@ -169,6 +232,8 @@ class OrderService:
             "propertyId": str(order.property_id),
             "tenantId": str(order.tenant_id),
             "items": items,
+            "held": bool((order.meta or {}).get("held")),
+            "meta": order.meta or {},
             "kotTickets": [
                 cls.serialize_kot(t) for t in order.kot_tickets.all()
             ],
@@ -181,6 +246,21 @@ class OrderService:
         "SERVED": "Served",
         "CANCELLED": "Cancelled",
     }
+
+    @classmethod
+    def _effective_order_type(cls, order: POSOrder) -> str:
+        if order.room_number and order.order_type == "DINE_IN":
+            return "ROOM_SERVICE"
+        return order.order_type
+
+    @classmethod
+    def _kot_location_label(cls, order: POSOrder) -> str:
+        loc = (order.table_number or order.room_number or "").strip()
+        if not loc:
+            return ""
+        if cls._effective_order_type(order) == "ROOM_SERVICE" and not loc.lower().startswith("room"):
+            return f"Room {loc}"
+        return loc
 
     @classmethod
     def serialize_kot(cls, ticket: KOTTicket) -> dict[str, Any]:
@@ -212,9 +292,9 @@ class OrderService:
             "orderId": str(order.id),
             "orderNumber": order.order_number,
             "orderType": (
-                f"{ORDER_TYPE_UI.get(order.order_type, order.order_type)}"
+                f"{ORDER_TYPE_UI.get(cls._effective_order_type(order), order.order_type)}"
                 + (
-                    f" ({order.table_number or order.room_number})"
+                    f" ({cls._kot_location_label(order)})"
                     if (order.table_number or order.room_number)
                     else ""
                 )
@@ -489,6 +569,9 @@ class OrderService:
             raise ValidationError({"outlet_id": "Outlet not found."})
 
         order_type = cls._normalize_order_type(data.get("order_type") or data.get("orderType"))
+        room_number = data.get("room_number") or data.get("roomNumber")
+        if room_number and order_type == "DINE_IN":
+            order_type = "ROOM_SERVICE"
         items_data = data.get("items") or []
         lines = cls._build_lines(items_data, outlet)
         totals = cls._recompute_totals(
@@ -518,6 +601,12 @@ class OrderService:
         payment_mode = cls._normalize_payment_mode(
             data.get("payment_mode") or data.get("paymentMode")
         )
+        held = cls._wants_held(data)
+        meta = dict(data.get("meta") or {})
+        if held:
+            meta["held"] = True
+        if data.get("heldCart") is not None:
+            meta["heldCart"] = data.get("heldCart")
         now = timezone.now()
         status = "SETTLED" if mark_settled else "PLACED"
 
@@ -532,7 +621,7 @@ class OrderService:
             table_number=table_number,
             section_name=section_name,
             room_unit_id=data.get("room_unit_id") or data.get("roomUnitId"),
-            room_number=data.get("room_number") or data.get("roomNumber"),
+            room_number=room_number,
             reservation_id=data.get("reservation_id") or data.get("reservationId"),
             folio_id=data.get("folio_id") or data.get("folioId"),
             guest_name=data.get("guest_name")
@@ -550,6 +639,7 @@ class OrderService:
             discount_amount=totals["discount_amount"],
             grand_total=totals["grand_total"],
             payment_mode=payment_mode,
+            meta=meta,
             placed_at=now,
             prepared_at=now if status == "SETTLED" else None,
             settled_at=now if status == "SETTLED" else None,
@@ -578,7 +668,7 @@ class OrderService:
 
         cls._record_status(order, None, status, note="Order created", user=user)
 
-        send_kot = data.get("send_kot", data.get("sendKot", True))
+        send_kot = cls._wants_kot(data, default=not held)
         ticket = None
         if send_kot and created_lines:
             ticket = cls._create_kot(
@@ -598,7 +688,7 @@ class OrderService:
                 ]
             )
 
-        if status != "SETTLED":
+        if status != "SETTLED" and not held:
             from apps.POS.services.dues import DueLedgerService
             try:
                 DueLedgerService.create_for_order(
@@ -754,6 +844,8 @@ class OrderService:
         if not order.is_open():
             raise ValidationError({"order": "Settled/cancelled orders are immutable."})
 
+        cls._apply_held_meta(order, data)
+
         items_data = data.get("items")
         if items_data is None:
             # Metadata-only patch
@@ -770,6 +862,7 @@ class OrderService:
             if "pax" in data:
                 order.pax = int(data["pax"])
             order.save()
+            cls._ensure_due_for_open_order(order, user=user)
             order = cls.order_queryset().get(pk=order.pk)
             return cls.serialize_order(order)
 
@@ -815,22 +908,25 @@ class OrderService:
         order.save()
 
         # Modified KOT with delta lines (full replacement snapshot for kitchen)
-        ticket = cls._create_kot(
-            order,
-            created_lines,
-            is_modified=True,
-            notes=order.order_note,
-            user=user,
-        )
-        # Open orders go back to PLACED when items change
-        if order.status == "PREPARED":
-            prev = order.status
-            order.status = "PLACED"
-            order.prepared_at = None
-            order.save(update_fields=["status", "prepared_at", "updated_at"])
-            cls._record_status(
-                order, prev, "PLACED", note="Items edited — back to kitchen", user=user
+        held = bool((order.meta or {}).get("held"))
+        ticket = None
+        if cls._wants_kot(data, default=not held) and created_lines:
+            ticket = cls._create_kot(
+                order,
+                created_lines,
+                is_modified=True,
+                notes=order.order_note,
+                user=user,
             )
+            # Open orders go back to PLACED when items change
+            if order.status == "PREPARED":
+                prev = order.status
+                order.status = "PLACED"
+                order.prepared_at = None
+                order.save(update_fields=["status", "prepared_at", "updated_at"])
+                cls._record_status(
+                    order, prev, "PLACED", note="Items edited — back to kitchen", user=user
+                )
 
         # Sync due bill total
         from apps.POS.models import POSDueBill
@@ -840,11 +936,14 @@ class OrderService:
             due_bill.due_amount = max(Decimal("0.00"), due_bill.total_amount - Decimal(str(due_bill.paid_amount)))
             due_bill.recompute_status()
             due_bill.save(update_fields=["total_amount", "due_amount", "status", "updated_at"])
+        else:
+            cls._ensure_due_for_open_order(order, user=user)
 
         order = cls.order_queryset().get(pk=order.pk)
         payload = cls.serialize_order(order)
-        payload["kotId"] = ticket.sequence
-        payload["kotNumber"] = ticket.kot_number
+        if ticket:
+            payload["kotId"] = ticket.sequence
+            payload["kotNumber"] = ticket.kot_number
         return payload
 
     @classmethod
@@ -888,14 +987,32 @@ class OrderService:
         outlet_id=None,
         tenant_id=None,
     ) -> list[dict[str, Any]]:
-        qs = cls.order_queryset().filter(status__in=cls.OPEN_STATUSES)
+        # Open checks, plus billed/folio orders that the kitchen is still cooking.
+        qs = cls.order_queryset().filter(
+            Q(status__in=cls.OPEN_STATUSES)
+            | Q(
+                status="SETTLED",
+                kot_tickets__deleted_at__isnull=True,
+                kot_tickets__status__in=("PENDING", "PREPARING"),
+            )
+        ).distinct()
         if property_id:
             qs = qs.filter(property_id=property_id)
         if outlet_id:
             qs = qs.filter(outlet_id=outlet_id)
         if tenant_id:
             qs = qs.filter(tenant_id=tenant_id)
-        return [cls.serialize_order(o) for o in qs.order_by("placed_at")]
+        rows = []
+        for o in qs.order_by("placed_at"):
+            data = cls.serialize_order(o)
+            has_open_kot = any(
+                t.status in ("PENDING", "PREPARING") for t in o.kot_tickets.all()
+            )
+            if o.status == "SETTLED" and has_open_kot:
+                data["currentStage"] = "placed"
+                data["stageLabel"] = "Placed (In Kitchen)"
+            rows.append(data)
+        return rows
 
     @classmethod
     def list_history(
@@ -975,14 +1092,18 @@ class OrderService:
         outlet_id=None,
         tenant_id=None,
     ) -> dict[str, Any]:
-        current = cls.list_current(
-            property_id=property_id, outlet_id=outlet_id, tenant_id=tenant_id
-        )
-        dine_in = [o for o in current if o["orderType"] in ("DINE_IN", "ROOM_SERVICE")]
+        current = [
+            o
+            for o in cls.list_current(
+                property_id=property_id, outlet_id=outlet_id, tenant_id=tenant_id
+            )
+            if not o.get("held")
+        ]
+        dine_in = [o for o in current if o["orderType"] == "DINE_IN"]
         takeaway = [o for o in current if o["orderType"] == "TAKEAWAY"]
         delivery = [o for o in current if o["orderType"] == "DELIVERY"]
-        placed = [o for o in current if o["status"] == "PLACED"]
-        prepared = [o for o in current if o["status"] == "PREPARED"]
+        placed = [o for o in current if o.get("currentStage") == "placed"]
+        prepared = [o for o in current if o.get("currentStage") == "prepared"]
 
         def _sum(rows):
             return float(sum(Decimal(str(r["grandTotal"])) for r in rows))
@@ -1030,23 +1151,24 @@ class OrderService:
         outlet_id=None,
         status: str | None = None,
     ) -> dict[str, Any]:
-        # Clean up any tickets belonging to soft-deleted or cancelled orders
+        # Clean up tickets for deleted/cancelled orders. Settled/folio bills stay
+        # on the kitchen display until the chef taps Ready — food still has to cook.
         KOTTicket.objects.filter(
             deleted_at__isnull=True,
             order__deleted_at__isnull=False,
         ).update(status="CANCELLED", deleted_at=timezone.now())
         KOTTicket.objects.filter(
             deleted_at__isnull=True,
-            order__status__in=("CANCELLED", "SETTLED"),
+            order__status="CANCELLED",
             status__in=("PENDING", "PREPARING"),
-        ).update(status="SERVED")
+        ).update(status="CANCELLED")
 
         qs = (
             KOTTicket.objects.filter(
                 deleted_at__isnull=True,
                 order__deleted_at__isnull=True,
             )
-            .exclude(order__status__in=("CANCELLED", "SETTLED"))
+            .exclude(order__status="CANCELLED")
             .select_related("order")
             .prefetch_related("items")
             .order_by("sent_at")
@@ -1058,7 +1180,8 @@ class OrderService:
         if status:
             qs = qs.filter(status=status.upper())
         else:
-            qs = qs.filter(status__in=("PENDING", "PREPARING", "READY"))
+            # Kitchen display is the live cook queue only — Ready leaves KOT.
+            qs = qs.filter(status__in=("PENDING", "PREPARING"))
         tickets = [cls.serialize_kot(t) for t in qs]
         return {
             "success": True,
@@ -1293,12 +1416,13 @@ class OrderService:
             note=f"Settled via {payment_mode}",
             user=user,
         )
-        KOTTicket.objects.filter(
-            order=order, status__in=("PENDING", "PREPARING", "READY")
-        ).update(status="SERVED", ready_at=now)
+        # Already-ready tickets leave the board; uncooked tickets stay on KOT.
+        KOTTicket.objects.filter(order=order, status="READY").update(
+            status="SERVED", ready_at=now
+        )
         cls._release_table(order)
 
-        # Part 5 — open due ledger when DUE or underpaid split/cash
+        # Part 5 — open due ledger when DUE or underpaid; close dues on full pay
         due_payload = None
         grand = Decimal(str(order.grand_total))
         settled_mode = payment_mode
@@ -1307,11 +1431,11 @@ class OrderService:
         else:
             paid_for_due = settle_amount
 
+        from apps.POS.services.dues import DueLedgerService
+
         if settled_mode == "DUE" or (
             settled_mode in ("CASH", "CARD", "UPI", "SPLIT") and paid_for_due < grand
         ):
-            from apps.POS.services.dues import DueLedgerService
-
             if settled_mode != "DUE" and paid_for_due < grand:
                 order.payment_mode = "DUE"
                 order.save(update_fields=["payment_mode", "updated_at"])
@@ -1321,6 +1445,8 @@ class OrderService:
                 user=user,
             )
             due_payload = DueLedgerService.serialize_due(bill)
+        else:
+            DueLedgerService.close_for_order(order, mode=settled_mode, user=user)
 
         order = cls.order_queryset().get(pk=order.pk)
         payload = cls.serialize_order(order)
