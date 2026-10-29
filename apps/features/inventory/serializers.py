@@ -156,40 +156,38 @@ class InventoryUnitSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('id', 'tenant', 'created_at', 'updated_at', 'created_by', 'updated_by')
 
-    def _get_active_task(self, obj):
-        if not hasattr(obj, '_cached_cleaning_task'):
-            tasks_by_room = self.context.get('tasks_by_room')
-            if tasks_by_room is not None:
-                obj._cached_cleaning_task = tasks_by_room.get(obj.id)
-            else:
-                try:
-                    from apps.features.housekeeping.models import CleaningTask
-                    task = CleaningTask.objects.filter(
-                        room=obj,
-                        status__in=['PENDING', 'IN_PROGRESS']
-                    ).select_related('assigned_staff').order_by('-created_at').first()
-                    if not task:
-                        task = CleaningTask.objects.filter(room=obj).select_related('assigned_staff').order_by('-created_at').first()
-                    obj._cached_cleaning_task = task
-                except Exception:
-                    obj._cached_cleaning_task = None
-        return obj._cached_cleaning_task
-
     def get_assigned_staff(self, obj):
-        task = self._get_active_task(obj)
-        if task and task.assigned_staff:
-            return task.assigned_staff.id
+        try:
+            from apps.features.housekeeping.models import CleaningTask
+            task = CleaningTask.objects.filter(
+                room=obj,
+                status__in=['PENDING', 'IN_PROGRESS']
+            ).order_by('-created_at').first()
+            if not task:
+                task = CleaningTask.objects.filter(room=obj).order_by('-created_at').first()
+            if task and task.assigned_staff:
+                return task.assigned_staff.id
+        except ImportError:
+            pass
         return None
 
     def get_assigned_staff_name(self, obj):
-        task = self._get_active_task(obj)
-        if task and task.assigned_staff:
-            staff = task.assigned_staff
-            return getattr(staff, 'name', None) or (
-                f"{staff.first_name} {staff.last_name or ''}".strip()
-                if hasattr(staff, 'first_name') and staff.first_name
-                else None
-            ) or getattr(staff, 'username', None) or getattr(staff, 'email', None)
+        try:
+            from apps.features.housekeeping.models import CleaningTask
+            task = CleaningTask.objects.filter(
+                room=obj,
+                status__in=['PENDING', 'IN_PROGRESS']
+            ).order_by('-created_at').first()
+            if not task:
+                task = CleaningTask.objects.filter(room=obj).order_by('-created_at').first()
+            if task and task.assigned_staff:
+                return task.assigned_staff.name or (
+                    f"{task.assigned_staff.first_name} {task.assigned_staff.last_name or ''}".strip()
+                    if hasattr(task.assigned_staff, 'first_name') and task.assigned_staff.first_name
+                    else None
+                ) or task.assigned_staff.username or task.assigned_staff.email
+        except ImportError:
+            pass
         return None
 
     def validate(self, data):

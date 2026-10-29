@@ -191,30 +191,7 @@ class InventoryUnitViewSet(RedisCacheMixin, viewsets.ModelViewSet):
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
             return InventoryUnit.objects.none()
-        qs = InventoryUnit.objects.filter(tenant=tenant).select_related('unit_type', 'building', 'floor_id')
-        property_id = self.request.headers.get('X-Property-ID') or self.request.query_params.get('property_id') or self.request.query_params.get('property')
-        if property_id:
-            qs = qs.filter(property_id=property_id)
-        return qs
-
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        try:
-            from apps.features.housekeeping.models import CleaningTask
-            tenant = getattr(self.request, 'tenant', None)
-            if tenant and self.action in ['list', 'retrieve']:
-                active_tasks = CleaningTask.objects.filter(
-                    tenant=tenant,
-                    status__in=['PENDING', 'IN_PROGRESS']
-                ).select_related('assigned_staff').order_by('-created_at')
-                tasks_by_room = {}
-                for t in active_tasks:
-                    if t.room_id not in tasks_by_room:
-                        tasks_by_room[t.room_id] = t
-                context['tasks_by_room'] = tasks_by_room
-        except Exception:
-            pass
-        return context
+        return InventoryUnit.objects.filter(tenant=tenant)
 
 
 class InventoryRelationshipViewSet(viewsets.ModelViewSet):
