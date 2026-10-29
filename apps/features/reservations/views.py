@@ -282,6 +282,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
                 'primary_guest__contacts',
                 'primary_guest__documents',
                 'extra_charges',
+                'timeline_events',
             )
         else:
             qs = Reservation.objects.filter(tenant=tenant).select_related(
@@ -305,7 +306,7 @@ class ReservationViewSet(RedisCacheMixin, viewsets.ModelViewSet):
             )
 
         # Property context filtering
-        property_id = self.request.headers.get('X-Property-ID') or (getattr(self.request, 'query_params', {}).get('property_id') if hasattr(self.request, 'query_params') else None)
+        property_id = self.request.headers.get('X-Property-ID') or (getattr(self.request, 'query_params', {}).get('property_id') if hasattr(self.request, 'query_params') else None) or (getattr(self.request, 'query_params', {}).get('property') if hasattr(self.request, 'query_params') else None)
         if property_id:
             qs = qs.filter(property_id=property_id)
         
