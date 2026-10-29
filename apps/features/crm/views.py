@@ -3,7 +3,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-from django.db.models import Q
+from django.db.models import Q, Avg
 
 from apps.features.crm.models import (
     GuestProfile, GuestContact, GuestDocument, GuestPreference,
@@ -33,7 +33,7 @@ class GuestProfileViewSet(viewsets.ModelViewSet):
         if not tenant:
             return GuestProfile.objects.none()
         
-        queryset = GuestProfile.objects.filter(tenant=tenant)
+        queryset = GuestProfile.objects.filter(tenant=tenant).order_by('-created_at')
         search_query = self.request.query_params.get('search') or self.request.query_params.get('query')
         if search_query:
             clean_search = search_query.strip()
@@ -47,7 +47,34 @@ class GuestProfileViewSet(viewsets.ModelViewSet):
             if len(clean_digits) >= 4:
                 q_filter |= Q(contacts__phone__icontains=clean_digits)
             queryset = queryset.filter(q_filter).distinct()
+
+        from_date = self.request.query_params.get('from_date') or self.request.query_params.get('start_date')
+        to_date = self.request.query_params.get('to_date') or self.request.query_params.get('end_date')
+        if from_date:
+            queryset = queryset.filter(created_at__date__gte=from_date)
+        if to_date:
+            queryset = queryset.filter(created_at__date__lte=to_date)
+
         return queryset
+
+    @action(detail=False, methods=['get'], url_path='stats')
+    def stats(self, request):
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'total': 0, 'repeat': 0, 'loyalty': 0, 'npsAvg': 0})
+        
+        qs = GuestProfile.objects.filter(tenant=tenant)
+        total = qs.count()
+        repeat = qs.filter(total_stays__gt=1).count()
+        loyalty = qs.exclude(loyalty_tier='STANDARD').count()
+        rated = qs.filter(nps_score__isnull=False)
+        avg_nps = rated.aggregate(avg=Avg('nps_score'))['avg'] if rated.exists() else 8
+        return Response({
+            'total': total,
+            'repeat': repeat,
+            'loyalty': loyalty,
+            'npsAvg': round(avg_nps) if avg_nps is not None else 8
+        })
 
     @extend_schema(
         parameters=[
