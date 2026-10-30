@@ -78,7 +78,12 @@ class OutletViewSet(viewsets.ModelViewSet):
         is_active = self.request.query_params.get('is_active')
 
         if property_id:
-            qs = qs.filter(property_id=property_id)
+            import uuid
+            try:
+                uuid.UUID(str(property_id))
+                qs = qs.filter(property_id=property_id)
+            except (ValueError, TypeError):
+                pass
         elif hasattr(self.request.user, 'properties') and self.request.user.is_authenticated:
             # Multi-property scope if authenticated
             user_props = self.request.user.properties.all()
@@ -86,9 +91,16 @@ class OutletViewSet(viewsets.ModelViewSet):
                 qs = qs.filter(property__in=user_props)
 
         if tenant_id:
-            qs = qs.filter(tenant_id=tenant_id)
+            import uuid
+            try:
+                uuid.UUID(str(tenant_id))
+                qs = qs.filter(tenant_id=tenant_id)
+            except (ValueError, TypeError):
+                qs = qs.filter(tenant__subdomain=tenant_id)
         elif hasattr(self.request.user, 'tenant') and self.request.user.is_authenticated and self.request.user.tenant:
             qs = qs.filter(tenant=self.request.user.tenant)
+        elif getattr(self.request, 'tenant', None):
+            qs = qs.filter(tenant=self.request.tenant)
 
         if outlet_type:
             qs = qs.filter(outlet_type=outlet_type.upper())
